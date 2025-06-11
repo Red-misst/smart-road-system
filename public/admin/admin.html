@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Road System - Admin Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin=""/>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+            crossorigin=""></script>
+    
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Material Icons -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <!-- Google Fonts -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
+    
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'accent-green': '#4CAF50',
+                        'accent-light': '#81C784',
+                        'accent-dark': '#2E7D32',
+                        'surface': '#202124',
+                        'card': '#303134',
+                    },
+                    fontFamily: {
+                        'sans': ['Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom styles for traffic simulation */
+        .intersection-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            background-color: #3c3c3c;
+            overflow: hidden;
+        }
+        
+        /* Main horizontal road that connects both intersections */
+        .main-road {
+            position: absolute;
+            height: 80px;
+            width: 100%;
+            background-color: #1a1a1a;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
+        /* Center yellow line for left-side driving */
+        .main-road-centerline {
+            position: absolute;
+            height: 4px;
+            width: 100%;
+            background-color: #ffcc00;
+            top: calc(50% + 2px);
+            transform: translateY(-50%);
+        }
+        
+        /* White dashed line for lane marking */
+        .main-road-lanemarking {
+            position: absolute;
+            height: 3px;
+            width: 100%;
+            top: calc(50% - 20px);
+            background-image: linear-gradient(to right, #ffffff 50%, transparent 50%);
+            background-size: 20px 100%;
+        }
+        
+        /* Additional dashed line for opposite direction */
+        .main-road-lanemarking-bottom {
+            position: absolute;
+            height: 3px;
+            width: 100%;
+            top: calc(50% + 24px);
+            background-image: linear-gradient(to right, #ffffff 50%, transparent 50%);
+            background-size: 20px 100%;
+        }
+        
+        /* Intersection area */
+        .intersection {
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            background-color: #1a1a1a;
+        }
+        
+        /* First intersection positioned on the left side */
+        .intersection-1 {
+            top: 50%;
+            left: 25%;
+            transform: translate(-50%, -50%);
+        }
+        
+        /* Second intersection positioned on the right side */
+        .intersection-2 {
+            top: 50%;
+            left: 75%;
+            transform: translate(-50%, -50%);
+        }
+        
+        /* Vertical crossing roads */
+        .cross-road {
+            position: absolute;
+            width: 80px;
+            height: 100%; /* Changed from 200px to 100% to span the full height */
+            background-color: #1a1a1a;
+        }
+        
+        .cross-road-1 {
+            top: 0; /* Changed from 50% to 0 to start from the top */
+            left: 25%;
+            transform: translateX(-50%); /* Removed translateY to avoid vertical centering */
+        }
+        
+        .cross-road-2 {
+            top: 0; /* Changed from 50% to 0 to start from the top */
+            left: 75%;
+            transform: translateX(-50%); /* Removed translateY to avoid vertical centering */
+        }
+        
+        /* Center line for vertical roads (left-side driving) */
+        .cross-road-centerline {
+            position: absolute;
+            width: 4px;
+            height: 100%;
+            background-color: #ffcc00;
+            left: calc(50% - 2px);
+        }
+        
+        /* Lane marking for vertical roads */
+        .cross-road-lanemarking {
+            position: absolute;
+            width: 3px;
+            height: 100%;
+            left: calc(50% + 20px);
+            background-image: linear-gradient(to bottom, #ffffff 50%, transparent 50%);
+            background-size: 100% 20px;
+        }
+        
+        /* Additional lane marking for opposite direction */
+        .cross-road-lanemarking-right {
+            position: absolute;
+            width: 3px;
+            height: 100%;
+            left: calc(50% - 24px);
+            background-image: linear-gradient(to bottom, #ffffff 50%, transparent 50%);
+            background-size: 100% 20px;
+        }
+        
+        /* Traffic light styles - revised for lane alignment */
+        .traffic-light {
+            position: absolute;
+            width: 8px;
+            height: 24px;
+            background-color: #333;
+            border-radius: 2px;
+            z-index: 10;
+        }
+        
+        /* Traffic light horizontal variant (for north/south directions) */
+        .traffic-light-horizontal {
+            width: 24px;
+            height: 8px;
+        }
+        
+        /* Adjust light positioning for horizontal lights */
+        .traffic-light-horizontal .light {
+            left: auto;
+            top: 1px;
+            width: 6px;
+            height: 6px;
+        }
+        
+        .traffic-light-horizontal .red-light {
+            left: 2px;
+        }
+        
+        .traffic-light-horizontal .yellow-light {
+            left: 10px;
+        }
+        
+        .traffic-light-horizontal .green-light {
+            left: 18px;
+        }
+        
+        /* Traffic lights for Intersection 1 - positioned by lanes */
+        /* North direction - horizontal orientation */
+        .tl-1-n {
+            top: calc(50% - 54px);
+            left: calc(25% + 10px); /* Aligned with the yellow centerline */
+            transform: rotate(0deg); /* Horizontal */
+        }
+        
+        /* South direction - horizontal orientation */
+        .tl-1-s {
+            top: calc(50% + 46px);
+            left: calc(25% - 35px); /* Aligned with the left lane */
+            transform: rotate(0deg); /* Horizontal */
+        }
+        
+        /* East direction - vertical orientation */
+        .tl-1-e {
+            top: calc(50% - 30px); /* Aligned with the top lane */
+            left: calc(25% + 46px);
+            transform: rotate(0deg); /* Vertical */
+        }
+        
+        /* West direction - vertical orientation */
+        .tl-1-w {
+            top: calc(50% + 6px); /* Aligned with the bottom lane */
+            left: calc(25% - 54px);
+            transform: rotate(0deg); /* Vertical */
+        }
+        
+        /* Traffic lights for Intersection 2 - positioned by lanes */
+        /* North direction - horizontal orientation */
+        .tl-2-n {
+            top: calc(50% - 54px);
+            left: calc(75% + 10px); /* Aligned with the yellow centerline */
+            transform: rotate(0deg); /* Horizontal */
+        }
+        
+        /* South direction - horizontal orientation */
+        .tl-2-s {
+            top: calc(50% + 46px);
+            left: calc(75% - 35px); /* Aligned with the left lane */
+            transform: rotate(0deg); /* Horizontal */
+        }
+        
+        /* East direction - vertical orientation */
+        .tl-2-e {
+            top: calc(50% - 30px); /* Aligned with the top lane */
+            left: calc(75% + 46px);
+            transform: rotate(0deg); /* Vertical */
+        }
+        
+        /* West direction - vertical orientation */
+        .tl-2-w {
+            top: calc(50% + 6px); /* Aligned with the bottom lane */
+            left: calc(75% - 54px);
+            transform: rotate(0deg); /* Vertical */
+        }
+        
+        /* Traffic light color styles */
+        .light {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            left: 1px;
+        }
+        
+        .red-light {
+            top: 2px;
+            background-color: #660000;
+        }
+        
+        .yellow-light {
+            top: 10px;
+            background-color: #664400;
+        }
+        
+        .green-light {
+            top: 18px;
+            background-color: #006600;
+        }
+        
+        /* Active light states */
+        .red-light.active {
+            background-color: #FF0000;
+            box-shadow: 0 0 5px 2px rgba(255, 0, 0, 0.7);
+        }
+        
+        .yellow-light.active {
+            background-color: #FFCC00;
+            box-shadow: 0 0 5px 2px rgba(255, 204, 0, 0.7);
+        }
+        
+        .green-light.active {
+            background-color: #00FF00;
+            box-shadow: 0 0 5px 2px rgba(0, 255, 0, 0.7);
+        }
+        
+        /* Additional traffic lights for multiple lanes */
+        /* Traffic lights for additional lanes - Intersection 1 */
+        .tl-1-n2 {
+            top: calc(50% - 54px);
+            left: calc(25% - 35px); /* Second lane for northbound */
+            transform: rotate(0deg);
+        }
+        
+        .tl-1-s2 {
+            top: calc(50% + 46px);
+            left: calc(25% + 10px); /* Second lane for southbound */
+            transform: rotate(0deg);
+        }
+        
+        .tl-1-e2 {
+            top: calc(50% + 10px); /* Second lane for eastbound */
+            left: calc(25% + 46px);
+            transform: rotate(0deg);
+        }
+        
+        .tl-1-w2 {
+            top: calc(50% - 30px); /* Second lane for westbound */
+            left: calc(25% - 54px);
+            transform: rotate(0deg);
+        }
+        
+        /* Traffic lights for additional lanes - Intersection 2 */
+        .tl-2-n2 {
+            top: calc(50% - 54px);
+            left: calc(75% - 35px); /* Second lane for northbound */
+            transform: rotate(0deg);
+        }
+        
+        .tl-2-s2 {
+            top: calc(50% + 46px);
+            left: calc(75% + 8px); /* Second lane for southbound */
+            transform: rotate(0deg);
+        }
+        
+        .tl-2-e2 {
+            top: calc(50% + 10px); /* Second lane for eastbound */
+            left: calc(75% + 46px);
+            transform: rotate(0deg);
+        }
+        
+        .tl-2-w2 {
+            top: calc(50% - 30px); /* Second lane for westbound */
+            left: calc(75% - 54px);
+            transform: rotate(0deg);
+        }
+        
+        /* Street label styles */
+        .street-label {
+            position: absolute;
+            color: white;
+            font-size: 10px;
+            background: rgba(0,0,0,0.6);
+            padding: 2px 4px;
+            border-radius: 2px;
+            z-index: 15;
+        }
+        
+        /* Street label positions - adjusted to match new traffic light positions */
+        .label-1-n {
+            top: calc(50% - 80px);
+            left: calc(25% + 5px);
+        }
+        
+        .label-1-s {
+            top: calc(50% + 70px);
+            left: calc(25% - 38px);
+        }
+        
+        .label-1-e {
+            top: calc(50% - 30px);
+            left: calc(25% + 60px);
+        }
+        
+        .label-1-w {
+            top: calc(50% + 6px);
+            left: calc(25% - 85px);
+        }
+        
+        .label-2-n {
+            top: calc(50% - 80px);
+            left: calc(75% + 10px);
+        }
+        
+        .label-2-s {
+            top: calc(50% + 60px);
+            left: calc(75% - 26px);
+        }
+        
+        .label-2-e {
+            top: calc(50% - 30px);
+            left: calc(75% + 60px);
+        }
+        
+        .label-2-w {
+            top: calc(50% + 6px);
+            left: calc(75% - 85px);
+        }
+        
+        /* Additional labels for new lanes */
+        .label-1-n2 {
+            top: calc(50% - 80px);
+            left: calc(25% - 40px);
+        }
+        
+        .label-1-s2 {
+            top: calc(50% + 70px);
+            left: calc(25% + 0px);
+        }
+        
+        .label-1-e2 {
+            top: calc(50% + 10px);
+            left: calc(25% + 60px);
+        }
+        
+        .label-1-w2 {
+            top: calc(50% - 30px);
+            left: calc(25% - 85px);
+        }
+        
+        .label-2-n2 {
+            top: calc(50% - 80px);
+            left: calc(75% - 40px);
+        }
+        
+        .label-2-s2 {
+            top: calc(50% + 70px);
+            left: calc(75% + 0px);
+        }
+        
+        .label-2-e2 {
+            top: calc(50% + 10px);
+            left: calc(75% + 60px);
+        }
+        
+        .label-2-w2 {
+            top: calc(50% - 30px);
+            left: calc(75% - 85px);
+        }
+        
+        /* Camera styles */
+        .camera {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #0088ff;
+            border-radius: 50%;
+            z-index: 20;
+            box-shadow: 0 0 4px rgba(0, 136, 255, 0.8);
+        }
+        
+        .camera::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 30px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            border: 1px dashed rgba(0, 136, 255, 0.5);
+            border-radius: 50%;
+        }
+        
+        /* Camera positions */
+        .camera-1 {
+            top: calc(50% - 60px);
+            left: calc(25% - 60px);
+        }
+        
+        .camera-2 {
+            top: calc(50% - 60px);
+            left: calc(75% - 60px);
+        }
+        
+        /* Intersection names */
+        .intersection-name {
+            position: absolute;
+            padding: 4px 8px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            font-size: 12px;
+            border-radius: 4px;
+            z-index: 15;
+        }
+        
+        .intersection-name-1 {
+            top: calc(50% + 60px);
+            left: calc(25% - 75px);
+        }
+        
+        .intersection-name-2 {
+            top: calc(50% + 60px);
+            left: calc(75% - 75px);
+        }
+        
+        .stats-card {
+            transition: transform 0.3s ease;
+        }
+        
+        .stats-card:hover {
+            transform: translateY(-5px);
+        }
+    </style>
+</head>
+<body class="bg-surface text-gray-200 min-h-screen flex flex-col antialiased">
+    <!-- Top Navigation Bar -->
+    <nav class="bg-card shadow-md">
+        <div class="container mx-auto px-4 py-3">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="material-icons text-accent-green">admin_panel_settings</span>
+                    <h1 class="text-white font-medium text-xl">Smart Traffic Admin</h1>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center">
+                        <span class="traffic-indicator pulse bg-accent-green mr-2 w-3 h-3 rounded-full"></span>
+                        <span id="system-status" class="text-sm">System Online</span>
+                    </div>
+                    <div class="text-sm font-medium" id="current-time">00:00:00</div>
+                    <a href="/" class="bg-card hover:bg-gray-700 text-white px-3 py-1 rounded-md text-sm flex items-center">
+                        <span class="material-icons text-sm mr-1">dashboard</span>
+                        <span>Dashboard</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <div class="container mx-auto p-4 flex-1 flex flex-col">
+        <!-- Page Title -->
+        <div class="mb-6">
+            <h2 class="text-white text-2xl font-light">Traffic Control Center</h2>
+            <p class="text-gray-400">Manage intersections, cameras, and analyze traffic patterns</p>
+        </div>
+        
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="bg-card rounded-lg p-4 shadow-md stats-card">
+                <div class="flex items-center text-gray-400 mb-2">
+                    <span class="material-icons mr-2">traffic</span>
+                    <span>Active Intersections</span>
+                </div>
+                <p id="active-intersections" class="text-white text-2xl font-light">4</p>
+            </div>
+            
+            <div class="bg-card rounded-lg p-4 shadow-md stats-card">
+                <div class="flex items-center text-gray-400 mb-2">
+                    <span class="material-icons mr-2">videocam</span>
+                    <span>Connected Cameras</span>
+                </div>
+                <p id="connected-cameras" class="text-white text-2xl font-light">2</p>
+            </div>
+            
+            <div class="bg-card rounded-lg p-4 shadow-md stats-card">
+                <div class="flex items-center text-gray-400 mb-2">
+                    <span class="material-icons mr-2">bar_chart</span>
+                    <span>Daily Traffic Volume</span>
+                </div>
+                <p id="traffic-volume" class="text-white text-2xl font-light">5,247</p>
+            </div>
+            
+            <div class="bg-card rounded-lg p-4 shadow-md stats-card">
+                <div class="flex items-center text-gray-400 mb-2">
+                    <span class="material-icons mr-2">sync</span>
+                    <span>System Status</span>
+                </div>
+                <p id="system-health" class="text-green-500 text-2xl font-light">Operational</p>
+            </div>
+        </div>
+        
+        <!-- Control Panel and Simulations -->
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Left Column: Controls -->
+            <div class="w-full lg:w-1/3 space-y-6">
+                <!-- Intersection Selection -->
+                <div class="bg-card rounded-lg p-4 shadow-md">
+                    <h3 class="text-white font-medium mb-3">Select Intersection</h3>
+                    <select id="intersection-select" class="w-full p-2 rounded bg-surface text-white border border-gray-700">
+                        <option value="intersection-1">Main Street & Central Avenue</option>
+                        <option value="intersection-2">Broadway & Park Road</option>
+                        <option value="intersection-3">High Street & Market Boulevard</option>
+                        <option value="intersection-4">Riverside Drive & Commerce Street</option>
+                    </select>
+                    
+                    <div class="mt-4 grid grid-cols-2 gap-3">
+                        <button id="activate-cameras" class="bg-accent-dark hover:bg-accent-green text-white py-2 px-3 rounded flex items-center justify-center">
+                            <span class="material-icons mr-1">videocam</span>
+                            <span>Activate Cameras</span>
+                        </button>
+                        <button id="traffic-pattern" class="bg-surface hover:bg-gray-700 text-white py-2 px-3 rounded flex items-center justify-center">
+                            <span class="material-icons mr-1">shuffle</span>
+                            <span>Change Pattern</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Traffic Control -->
+                <div class="bg-card rounded-lg p-4 shadow-md">
+                    <h3 class="text-white font-medium mb-3">Traffic Light Control</h3>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-surface rounded p-2 text-center">
+                            <h4 class="text-gray-400 text-sm mb-1">East-West</h4>
+                            <div id="east-west-status" class="text-green-500 font-medium">GREEN</div>
+                        </div>
+                        <div class="bg-surface rounded p-2 text-center">
+                            <h4 class="text-gray-400 text-sm mb-1">North-South</h4>
+                            <div id="north-south-status" class="text-red-500 font-medium">RED</div>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-gray-400 text-sm">Cycle Duration (seconds)</label>
+                            <input id="cycle-duration" type="range" min="30" max="120" value="60" class="w-full bg-surface appearance-none rounded-lg h-2 my-2">
+                            <div class="flex justify-between text-xs text-gray-500">
+                                <span>30s</span>
+                                <span id="cycle-value">60s</span>
+                                <span>120s</span>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="text-gray-400 text-sm">Traffic Flow Rate</label>
+                            <input id="flow-rate" type="range" min="1" max="10" value="5" class="w-full bg-surface appearance-none rounded-lg h-2 my-2">
+                            <div class="flex justify-between text-xs text-gray-500">
+                                <span>Light</span>
+                                <span id="flow-value">Medium</span>
+                                <span>Heavy</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 flex justify-between">
+                        <button id="emergency-mode" class="bg-red-700 hover:bg-red-600 text-white py-2 px-4 rounded">
+                            Emergency Mode
+                        </button>
+                        <button id="auto-control" class="bg-blue-700 hover:bg-blue-600 text-white py-2 px-4 rounded">
+                            Auto Control
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Detector Settings -->
+                <div class="bg-card rounded-lg p-4 shadow-md">
+                    <h3 class="text-white font-medium mb-3">Detection Settings</h3>
+                    
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-gray-400 text-sm">Confidence Threshold</label>
+                            <input id="confidence-threshold" type="range" min="20" max="95" value="50" class="w-full bg-surface appearance-none rounded-lg h-2 my-2">
+                            <div class="flex justify-between text-xs text-gray-500">
+                                <span>20%</span>
+                                <span id="threshold-value">50%</span>
+                                <span>95%</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex items-center space-x-3 py-2">
+                            <input type="checkbox" id="show-detections" class="w-4 h-4 bg-surface" checked>
+                            <label for="show-detections" class="text-gray-400 text-sm">Show Detection Boxes</label>
+                        </div>
+                        
+                        <div class="flex items-center space-x-3 py-2">
+                            <input type="checkbox" id="enable-analytics" class="w-4 h-4 bg-surface" checked>
+                            <label for="enable-analytics" class="text-gray-400 text-sm">Enable Analytics Processing</label>
+                        </div>
+                        
+                        <div class="flex items-center space-x-3 py-2">
+                            <input type="checkbox" id="save-data" class="w-4 h-4 bg-surface" checked>
+                            <label for="save-data" class="text-gray-400 text-sm">Save Traffic Data</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Column: Simulation & Data -->
+            <div class="w-full lg:w-2/3 space-y-6">
+                <!-- Intersection Simulation -->
+                <div class="bg-card rounded-lg shadow-md overflow-hidden">
+                    <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                        <h3 class="text-white font-medium">Kenyan Traffic System</h3>
+                        <div class="flex items-center text-sm">
+                            <span class="traffic-indicator bg-green-500 mr-1"></span>
+                            <span class="text-gray-300">Live View</span>
+                        </div>
+                    </div>
+                    
+                    <div id="intersection-simulation" class="intersection-container">
+                        <!-- Main connecting road -->
+                        <div class="main-road"></div>
+                        <div class="main-road-centerline"></div>
+                        <div class="main-road-lanemarking"></div>
+                        <div class="main-road-lanemarking-bottom"></div>
+                        
+                        <!-- First intersection and cross road -->
+                        <div class="cross-road cross-road-1">
+                            <div class="cross-road-centerline"></div>
+                            <div class="cross-road-lanemarking"></div>
+                            <div class="cross-road-lanemarking-right"></div>
+                        </div>
+                        <div class="intersection intersection-1"></div>
+                        
+                        <!-- Traffic Lights for Intersection 1 - one for each lane -->
+                        <div class="street-label label-1-n">TL-1-N</div>
+                        <div class="traffic-light traffic-light-horizontal tl-1-n" id="tl-1-n">
+                            <div class="light red-light active" id="tl-1-n-red"></div>
+                            <div class="light yellow-light" id="tl-1-n-yellow"></div>
+                            <div class="light green-light" id="tl-1-n-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-s">TL-1-S</div>
+                        <div class="traffic-light traffic-light-horizontal tl-1-s" id="tl-1-s">
+                            <div class="light red-light active" id="tl-1-s-red"></div>
+                            <div class="light yellow-light" id="tl-1-s-yellow"></div>
+                            <div class="light green-light" id="tl-1-s-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-e">TL-1-E</div>
+                        <div class="traffic-light tl-1-e" id="tl-1-e">
+                            <div class="light red-light" id="tl-1-e-red"></div>
+                            <div class="light yellow-light" id="tl-1-e-yellow"></div>
+                            <div class="light green-light active" id="tl-1-e-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-w">TL-1-W</div>
+                        <div class="traffic-light tl-1-w" id="tl-1-w">
+                            <div class="light red-light" id="tl-1-w-red"></div>
+                            <div class="light yellow-light" id="tl-1-w-yellow"></div>
+                            <div class="light green-light active" id="tl-1-w-green"></div>
+                        </div>
+                        
+                        <!-- Additional Traffic Lights for Intersection 1 - second lanes -->
+                        <div class="street-label label-1-n2">TL-1-N2</div>
+                        <div class="traffic-light traffic-light-horizontal tl-1-n2" id="tl-1-n2">
+                            <div class="light red-light active" id="tl-1-n2-red"></div>
+                            <div class="light yellow-light" id="tl-1-n2-yellow"></div>
+                            <div class="light green-light" id="tl-1-n2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-s2">TL-1-S2</div>
+                        <div class="traffic-light traffic-light-horizontal tl-1-s2" id="tl-1-s2">
+                            <div class="light red-light active" id="tl-1-s2-red"></div>
+                            <div class="light yellow-light" id="tl-1-s2-yellow"></div>
+                            <div class="light green-light" id="tl-1-s2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-e2">TL-1-E2</div>
+                        <div class="traffic-light tl-1-e2" id="tl-1-e2">
+                            <div class="light red-light" id="tl-1-e2-red"></div>
+                            <div class="light yellow-light" id="tl-1-e2-yellow"></div>
+                            <div class="light green-light active" id="tl-1-e2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-1-w2">TL-1-W2</div>
+                        <div class="traffic-light tl-1-w2" id="tl-1-w2">
+                            <div class="light red-light" id="tl-1-w2-red"></div>
+                            <div class="light yellow-light" id="tl-1-w2-yellow"></div>
+                            <div class="light green-light active" id="tl-1-w2-green"></div>
+                        </div>
+                        
+                        <!-- Second intersection and cross road -->
+                        <div class="cross-road cross-road-2">
+                            <div class="cross-road-centerline"></div>
+                            <div class="cross-road-lanemarking"></div>
+                            <div class="cross-road-lanemarking-right"></div>
+                        </div>
+                        <div class="intersection intersection-2"></div>
+                        
+                        <!-- Traffic Lights for Intersection 2 - positioned by lanes -->
+                        <div class="street-label label-2-n">TL-2-N</div>
+                        <div class="traffic-light traffic-light-horizontal tl-2-n" id="tl-2-n">
+                            <div class="light red-light active" id="tl-2-n-red"></div>
+                            <div class="light yellow-light" id="tl-2-n-yellow"></div>
+                            <div class="light green-light" id="tl-2-n-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-s">TL-2-S</div>
+                        <div class="traffic-light traffic-light-horizontal tl-2-s" id="tl-2-s">
+                            <div class="light red-light active" id="tl-2-s-red"></div>
+                            <div class="light yellow-light" id="tl-2-s-yellow"></div>
+                            <div class="light green-light" id="tl-2-s-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-e">TL-2-E</div>
+                        <div class="traffic-light tl-2-e" id="tl-2-e">
+                            <div class="light red-light" id="tl-2-e-red"></div>
+                            <div class="light yellow-light" id="tl-2-e-yellow"></div>
+                            <div class="light green-light active" id="tl-2-e-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-w">TL-2-W</div>
+                        <div class="traffic-light tl-2-w" id="tl-2-w">
+                            <div class="light red-light" id="tl-2-w-red"></div>
+                            <div class="light yellow-light" id="tl-2-w-yellow"></div>
+                            <div class="light green-light active" id="tl-2-w-green"></div>
+                        </div>
+                        
+                        <!-- Additional Traffic Lights for Intersection 2 - second lanes -->
+                        <div class="street-label label-2-n2">TL-2-N2</div>
+                        <div class="traffic-light traffic-light-horizontal tl-2-n2" id="tl-2-n2">
+                            <div class="light red-light active" id="tl-2-n2-red"></div>
+                            <div class="light yellow-light" id="tl-2-n2-yellow"></div>
+                            <div class="light green-light" id="tl-2-n2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-s2">TL-2-S2</div>
+                        <div class="traffic-light traffic-light-horizontal tl-2-s2" id="tl-2-s2">
+                            <div class="light red-light active" id="tl-2-s2-red"></div>
+                            <div class="light yellow-light" id="tl-2-s2-yellow"></div>
+                            <div class="light green-light" id="tl-2-s2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-e2">TL-2-E2</div>
+                        <div class="traffic-light tl-2-e2" id="tl-2-e2">
+                            <div class="light red-light" id="tl-2-e2-red"></div>
+                            <div class="light yellow-light" id="tl-2-e2-yellow"></div>
+                            <div class="light green-light active" id="tl-2-e2-green"></div>
+                        </div>
+                        
+                        <div class="street-label label-2-w2">TL-2-W2</div>
+                        <div class="traffic-light tl-2-w2" id="tl-2-w2">
+                            <div class="light red-light" id="tl-2-w2-red"></div>
+                            <div class="light yellow-light" id="tl-2-w2-yellow"></div>
+                            <div class="light green-light active" id="tl-2-w2-green"></div>
+                        </div>
+                        
+                        <!-- Cameras -->
+                        <div class="camera camera-1"></div>
+                        <div class="camera camera-2"></div>
+                        
+                        <!-- Intersection names -->
+                        <div class="intersection-name intersection-name-1">ST1</div>
+                        <div class="intersection-name intersection-name-2">ST2</div>
+                    </div>
+                </div>
+                
+                <!-- Traffic Analytics -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Vehicle Composition -->
+                    <div class="bg-card rounded-lg p-4 shadow-md">
+                        <h3 class="text-white font-medium mb-3">Vehicle Composition</h3>
+                        <div class="w-full h-60">
+                            <canvas id="vehicle-composition-chart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <!-- Peak Hour Analysis -->
+                    <div class="bg-card rounded-lg p-4 shadow-md">
+                        <h3 class="text-white font-medium mb-3">Hourly Traffic Flow</h3>
+                        <div class="w-full h-60">
+                            <canvas id="hourly-traffic-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Traffic Engineering Metrics -->
+                <div class="bg-card rounded-lg shadow-md">
+                    <div class="p-4 border-b border-gray-700">
+                        <h3 class="text-white font-medium">Traffic Engineering Metrics</h3>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-4">
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Level of Service (LOS)</h4>
+                            <p id="level-of-service" class="text-xl font-light text-green-500">B</p>
+                            <p class="text-xs text-gray-500 mt-1">Good traffic flow</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Delay (sec/vehicle)</h4>
+                            <p id="average-delay" class="text-xl font-light text-white">18.5</p>
+                            <p class="text-xs text-gray-500 mt-1">Average wait time</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Queue Length (meters)</h4>
+                            <p id="queue-length" class="text-xl font-light text-white">42</p>
+                            <p class="text-xs text-gray-500 mt-1">At peak hour</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Volume/Capacity Ratio</h4>
+                            <p id="v-c-ratio" class="text-xl font-light text-yellow-500">0.78</p>
+                            <p class="text-xs text-gray-500 mt-1">Nearing capacity</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">PCE (Passenger Car Equiv.)</h4>
+                            <p id="pce-value" class="text-xl font-light text-white">1.34</p>
+                            <p class="text-xs text-gray-500 mt-1">Fleet adjustment</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Critical Gap (sec)</h4>
+                            <p id="critical-gap" class="text-xl font-light text-white">4.5</p>
+                            <p class="text-xs text-gray-500 mt-1">Turn acceptance</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Saturation Flow (veh/hr)</h4>
+                            <p id="saturation-flow" class="text-xl font-light text-white">1,850</p>
+                            <p class="text-xs text-gray-500 mt-1">Base capacity</p>
+                        </div>
+                        
+                        <div class="bg-surface rounded p-3">
+                            <h4 class="text-gray-400 text-sm">Intersection Capacity</h4>
+                            <p id="intersection-capacity" class="text-xl font-light text-white">2,400</p>
+                            <p class="text-xs text-gray-500 mt-1">Vehicles per hour</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- System Log -->
+                <div class="bg-card rounded-lg shadow-md">
+                    <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                        <h3 class="text-white font-medium">System Activity Log</h3>
+                        <button id="clear-log" class="text-sm bg-surface hover:bg-gray-700 px-2 py-1 rounded">Clear Log</button>
+                    </div>
+                    
+                    <div class="overflow-y-auto" style="max-height: 200px;">
+                        <table class="w-full">
+                            <tbody id="system-log" class="text-sm">
+                                <tr class="border-b border-gray-700">
+                                    <td class="p-2 text-gray-500 w-24">10:15:22</td>
+                                    <td class="p-2 text-green-400">System initialized successfully</td>
+                                </tr>
+                                <tr class="border-b border-gray-700">
+                                    <td class="p-2 text-gray-500 w-24">10:15:42</td>
+                                    <td class="p-2 text-white">Camera 1 connected to intersection</td>
+                                </tr>
+                                <tr class="border-b border-gray-700">
+                                    <td class="p-2 text-gray-500 w-24">10:15:47</td>
+                                    <td class="p-2 text-white">Camera 2 connected to intersection</td>
+                                </tr>
+                                <tr class="border-b border-gray-700">
+                                    <td class="p-2 text-gray-500 w-24">10:16:30</td>
+                                    <td class="p-2 text-white">Traffic pattern analysis started</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 text-gray-500 w-24">10:17:05</td>
+                                    <td class="p-2 text-yellow-400">Traffic density increasing at Main Street intersection</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Include our JavaScript -->
+    <script src="../js/admin.js"></script>
+</body>
+</html>

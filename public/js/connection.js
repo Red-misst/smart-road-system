@@ -48,8 +48,7 @@ export const connection = {
             app.ws.close();
         }
     },
-    
-    /**
+      /**
      * Handle WebSocket open event
      */
     onOpen() {
@@ -68,6 +67,9 @@ export const connection = {
         connection.sendMessage({
             type: 'get_camera_list'
         });
+        
+        // Show live indicator
+        document.getElementById('stream-indicator').classList.remove('hidden');
     },
     
     /**

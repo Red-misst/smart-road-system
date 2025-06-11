@@ -20,11 +20,11 @@ const app = {
     intersections: [], // List of traffic intersections
     trafficStatus: new Map(), // Map<intersectionId, status>
     alerts: [],
-    
-    // Frame processing
+      // Frame processing
     frameCounter: 0,
     fpsCounter: 0,
     lastFpsUpdate: Date.now(),
+    streamingStarted: false,
     
     // Map elements
     map: null,

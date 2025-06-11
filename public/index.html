@@ -59,6 +59,10 @@
                         <span id="system-status" class="text-sm">System Online</span>
                     </div>
                     <div class="text-sm font-medium" id="current-time">00:00:00</div>
+                    <a href="/public/admin/admin.html" class="bg-card hover:bg-gray-700 text-white px-3 py-1 rounded-md text-sm flex items-center mr-2">
+                        <span class="material-icons text-sm mr-1">admin_panel_settings</span>
+                        <span>Admin</span>
+                    </a>
                     <button id="camera-toggle" class="bg-accent-dark hover:bg-accent-green text-white px-3 py-1 rounded-md text-sm flex items-center">
                         <span class="material-icons text-sm mr-1">videocam</span>
                         <span>Connect Camera</span>
@@ -70,10 +74,14 @@
     
     <!-- Main Content -->
     <div class="flex-1 flex flex-col lg:flex-row">
+        <!-- Sidebar Toggle Button for Mobile -->
+        <button id="sidebar-toggle" class="sidebar-toggle text-white">
+            <span class="material-icons">menu</span>
+        </button>
+        
         <!-- Dashboard Panel -->
-        <div class="bg-card w-full lg:w-80 p-4 lg:min-h-full">
+        <div id="sidebar" class="bg-card w-full lg:w-80 p-4 lg:min-h-full sidebar-transition">
             <h2 class="text-gray-300 font-medium text-lg mb-4 pb-2 border-b border-gray-700">Dashboard Overview</h2>
-            
             <!-- Stats Cards -->
             <div class="grid grid-cols-2 gap-4 mb-6">
                 <div class="bg-surface rounded-md p-4 shadow-md">
@@ -194,14 +202,16 @@
                     <button id="close-detail" class="text-gray-400 hover:text-gray-200">
                         <span class="material-icons">close</span>
                     </button>
-                </div>
-                <div class="flex flex-col md:flex-row">
+                </div>                <div class="flex flex-col md:flex-row">
                     <div class="md:w-1/3 p-2">
-                        <div id="traffic-camera-feed" class="bg-surface rounded-md h-48 flex items-center justify-center mb-2 shadow-md overflow-hidden">
-                            <!-- Camera feed will be added dynamically -->
-                            <span class="material-icons text-4xl text-gray-600">videocam</span>
+                        <div class="relative">
+                            <div id="traffic-camera-feed" class="bg-surface rounded-md h-60 flex items-center justify-center mb-2 shadow-md overflow-hidden">
+                                <!-- Camera feed will be added dynamically -->
+                                <span class="material-icons text-4xl text-gray-600">videocam</span>
+                            </div>
+                            <div id="detection-boxes-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+                            <div class="live-indicator hidden" id="stream-indicator">LIVE</div>
                         </div>
-                        <div id="detection-boxes-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
                         <p class="text-gray-400 text-xs text-center">Live Camera Feed</p>
                     </div>
                     <div class="md:w-2/3 p-2">

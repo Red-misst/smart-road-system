@@ -62,8 +62,7 @@ export const camera = {
             ui.updateActiveCameraInfo();
         }
     },
-    
-    /**
+      /**
      * Process binary frame data (JPEG image)
      */
     processBinaryFrame(data) {
@@ -96,8 +95,7 @@ export const camera = {
         
         const objectUrl = URL.createObjectURL(blob);
         app.latestFrames.set(cameraId, objectUrl);
-        
-        // Update UI for this camera
+          // Update UI for this camera
         ui.updateCameraFrame(cameraId, objectUrl);
         
         // Update FPS counter
@@ -113,9 +111,16 @@ export const camera = {
                 ui.updateFps(app.fpsCounter);
             }
         }
+        
+        // Request next frame if streaming is active for this camera
+        if (app.wsConnected && app.activeCameraId === cameraId) {
+            // Short timeout to prevent overwhelming the server
+            setTimeout(() => {
+                connection.requestFrame(cameraId);
+            }, 40); // ~25fps target
+        }
     },
-    
-    /**
+      /**
      * Handle camera disconnection
      */
     handleCameraDisconnect(cameraId) {
@@ -134,9 +139,18 @@ export const camera = {
             // Update UI
             ui.updateCameraStatus(cameraId);
         
-            // Notify if this was the active camera
+            // Handle disconnection if this was the active camera
             if (app.activeCameraId === cameraId) {
-                ui.showNotification('Camera disconnected', 'warning');
+                // Hide live indicator
+                document.getElementById('stream-indicator').classList.add('hidden');
+                
+                // Reset streaming state
+                app.streamingStarted = false;
+                
+                // Show disconnection message
+                if (ui.showNotification) {
+                    ui.showNotification('Camera disconnected', 'warning');
+                }
             }
         }
     },

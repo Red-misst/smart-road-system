@@ -141,8 +141,7 @@ export const styles = {
                     justify-content: space-between;
                 }
             }
-            
-            /* Route path styling */
+              /* Route path styling */
             .route-path {
                 transition: all 0.3s ease;
             }
@@ -150,6 +149,85 @@ export const styles = {
             .route-path:hover {
                 stroke-width: 6px;
                 filter: drop-shadow(0 0 3px rgba(255,255,255,0.5));
+            }
+            
+            /* Sidebar collapsible styles for mobile */
+            .sidebar-toggle {
+                display: none;
+            }
+            
+            @media (max-width: 1023px) {
+                .sidebar-toggle {
+                    display: flex;
+                    position: fixed;
+                    top: 70px;
+                    left: 10px;
+                    z-index: 1000;
+                    background-color: #303134;
+                    border-radius: 50%;
+                    width: 40px;
+                    height: 40px;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+                    cursor: pointer;
+                }
+                
+                .sidebar-hidden {
+                    transform: translateX(-100%);
+                    position: fixed;
+                    height: calc(100% - 56px);
+                    z-index: 999;
+                    overflow-y: auto;
+                }
+                
+                .sidebar-visible {
+                    transform: translateX(0);
+                    position: fixed;
+                    height: calc(100% - 56px);
+                    z-index: 999;
+                    overflow-y: auto;
+                    width: 100%;
+                    max-width: 320px;
+                }
+                
+                .content-full {
+                    margin-left: 0;
+                }
+                
+                .sidebar-transition {
+                    transition: transform 0.3s ease;
+                }
+            }
+            
+            /* Live indicator for streaming video */
+            .live-indicator {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background-color: rgba(244, 67, 54, 0.8);
+                color: white;
+                padding: 2px 6px;
+                border-radius: 2px;
+                font-size: 10px;
+                z-index: 5;
+            }
+            
+            /* Fix detection boxes container positioning */
+            #detection-boxes-container {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: 10;
+            }
+            
+            /* Fix for traffic camera feed container */
+            #traffic-camera-feed {
+                position: relative;
+                overflow: hidden;
             }
         `;
         document.head.appendChild(style);

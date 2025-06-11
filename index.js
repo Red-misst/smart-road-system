@@ -193,6 +193,7 @@ const server = createServer(async (req, res) => {
   const publicFiles = [
     '/',
     '/index.html',
+    '/public/admin/admin.html', // Add admin.html to allowed files
     '/page.js',
     '/styles.css'
   ];

@@ -9,18 +9,49 @@ import { detection } from './detection.js';
 import { traffic } from './traffic.js';
 
 // UI management
-export const ui = {
-    /**
+export const ui = {    /**
      * Initialize the UI
      */
     init() {
+        // Initialize mobile classes
+        if (window.innerWidth < 1024) {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                sidebar.classList.add('sidebar-transition', 'sidebar-hidden');
+            }
+        }
+        
         this.setupEventListeners();
         this.updateCamerasSection();
         this.updateConnectionStatus('disconnected');
         this.setupClockUpdate();
+        
+        // Add resize handler for responsive design
+        window.addEventListener('resize', this.handleResize.bind(this));
     },
     
     /**
+     * Handle window resize events
+     */
+    handleResize() {
+        const sidebar = document.getElementById('sidebar');
+        
+        if (window.innerWidth >= 1024) {
+            // Remove mobile classes on large screens
+            if (sidebar) {
+                sidebar.classList.remove('sidebar-visible', 'sidebar-hidden', 'sidebar-transition');
+            }
+        } else {
+            // Add mobile classes on small screens if not already present
+            if (sidebar && !sidebar.classList.contains('sidebar-transition')) {
+                sidebar.classList.add('sidebar-transition');
+                if (!sidebar.classList.contains('sidebar-visible')) {
+                    sidebar.classList.add('sidebar-hidden');
+                }
+            }
+        }
+    },
+      /**
      * Setup UI-related event listeners
      */
     setupEventListeners() {
@@ -32,6 +63,24 @@ export const ui = {
                 connection.connect();
             }
         });
+        
+        // Sidebar toggle for mobile
+        const sidebarToggle = document.getElementById('sidebar-toggle');
+        if (sidebarToggle) {
+            sidebarToggle.addEventListener('click', function() {
+                const sidebar = document.getElementById('sidebar');
+                if (sidebar) {
+                    // Toggle sidebar visibility
+                    if (sidebar.classList.contains('sidebar-visible')) {
+                        sidebar.classList.remove('sidebar-visible');
+                        sidebar.classList.add('sidebar-hidden');
+                    } else {
+                        sidebar.classList.remove('sidebar-hidden');
+                        sidebar.classList.add('sidebar-visible');
+                    }
+                }
+            });
+        }
         
         // Close cameras section
         document.getElementById('close-cameras').addEventListener('click', () => {
@@ -282,8 +331,7 @@ export const ui = {
             this.updateActiveCamera(imageUrl);
         }
     },
-    
-    /**
+      /**
      * Update the active camera display
      */
     updateActiveCamera(imageUrl) {
@@ -300,6 +348,13 @@ export const ui = {
             img.className = 'w-full h-full object-cover';
             img.alt = 'Camera Feed';
             cameraFeed.appendChild(img);
+            
+            // Add FPS counter
+            const fpsCounter = document.createElement('div');
+            fpsCounter.id = 'fps-counter';
+            fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded';
+            fpsCounter.textContent = '0 FPS';
+            cameraFeed.appendChild(fpsCounter);
         }
         
         // Update image source
@@ -309,6 +364,16 @@ export const ui = {
         const cameraId = app.activeCameraId;
         if (cameraId && app.showDetections && detection.results.has(cameraId)) {
             detection.renderDetectionBoxes(cameraId);
+        }
+        
+        // Show live indicator
+        document.getElementById('stream-indicator').classList.remove('hidden');
+        
+        // Start streaming if this is the first frame and we're connected
+        if (app.wsConnected && cameraId && !app.streamingStarted) {
+            app.streamingStarted = true;
+            // Initial frame request to start streaming
+            connection.requestFrame(cameraId);
         }
     },
     
@@ -572,9 +637,18 @@ export const ui = {
      * Update FPS counter
      */
     updateFps(fps) {
-        const fpsElem = document.getElementById('fps-counter');
-        if (fpsElem) {
-            fpsElem.textContent = `${fps} FPS`;
+        const fpsCounter = document.getElementById('fps-counter');
+        if (fpsCounter) {
+            fpsCounter.textContent = `${fps} FPS`;
+            
+            // Color code based on performance
+            if (fps >= 20) {
+                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-green-400 text-xs px-2 py-1 rounded';
+            } else if (fps >= 10) {
+                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-yellow-400 text-xs px-2 py-1 rounded';
+            } else {
+                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-red-400 text-xs px-2 py-1 rounded';
+            }
         }
     },
     
@@ -660,36 +734,35 @@ export const ui = {
      * Show notification to the user
      */
     showNotification(message, type = 'info') {
-        // Create a simple notification that fades away
-        const notification = document.createElement('div');
-        notification.className = 'fixed bottom-4 right-4 p-3 rounded-md text-sm shadow-lg transition-opacity duration-300';
+        // Create toast notification
+        const toast = document.createElement('div');
+        toast.className = 'fixed bottom-4 right-4 px-4 py-2 rounded-md shadow-lg text-white z-50 transition-opacity duration-300';
         
-        // Style based on type
-        switch (type) {
-            case 'error':
-                notification.classList.add('bg-red-600', 'text-white');
+        // Set style based on notification type
+        switch(type) {
+            case 'success':
+                toast.className += ' bg-green-500';
                 break;
             case 'warning':
-                notification.classList.add('bg-yellow-500', 'text-white');
+                toast.className += ' bg-yellow-500';
                 break;
-            case 'success':
-                notification.classList.add('bg-accent-green', 'text-white');
+            case 'error':
+                toast.className += ' bg-red-500';
                 break;
             default:
-                notification.classList.add('bg-blue-600', 'text-white');
+                toast.className += ' bg-blue-500';
         }
         
-        notification.textContent = message;
+        toast.textContent = message;
+        document.body.appendChild(toast);
         
-        document.body.appendChild(notification);
-        
-        // Fade out and remove after 5 seconds
+        // Fade out and remove after delay
         setTimeout(() => {
-            notification.style.opacity = '0';
+            toast.style.opacity = '0';
             setTimeout(() => {
-                notification.remove();
+                document.body.removeChild(toast);
             }, 300);
-        }, 5000);
+        }, 3000);
     },
     
     /**

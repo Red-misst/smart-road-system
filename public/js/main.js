@@ -27,10 +27,8 @@ function initApp() {
     
     // Initialize traffic data
     traffic.init();
-    
-    // Connect to WebSocket server
-    // Uncomment the line below to auto-connect on page load
-    // connection.connect();
+      // Connect to WebSocket server automatically
+    connection.connect();
     
     console.log('Smart Road System initialized');
 }
