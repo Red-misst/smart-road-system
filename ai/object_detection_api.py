@@ -271,6 +271,41 @@ async def process_image(image_data, confidence_threshold=0.25, camera_id=None):
         elif vehicle_count >= 5:
             traffic_density = "moderate"
         
+        # Calculate additional metrics for admin dashboard
+        avg_speed_kph = None
+        avg_delay_sec = None
+        queue_length = None
+        
+        # Estimate metrics based on vehicle count and density
+        if traffic_density == "high":
+            avg_speed_kph = 10 + (20 * (1 - min(1, vehicle_count / 20)))  # Lower speed with more vehicles
+            avg_delay_sec = 40 + (vehicle_count * 2)  # Higher delay with more vehicles
+            queue_length = 40 + (vehicle_count * 3)  # Longer queue with more vehicles
+        elif traffic_density == "moderate":
+            avg_speed_kph = 30 + (20 * (1 - min(1, vehicle_count / 15)))
+            avg_delay_sec = 20 + vehicle_count
+            queue_length = 20 + (vehicle_count * 2)
+        else:
+            avg_speed_kph = 50 + (10 * (1 - min(1, vehicle_count / 10)))
+            avg_delay_sec = 5 + (vehicle_count * 0.5)
+            queue_length = 5 + vehicle_count
+            
+        # Calculate level of service based on delay
+        los = "A"  # Default
+        if avg_delay_sec > 80:
+            los = "F"
+        elif avg_delay_sec > 55:
+            los = "E"
+        elif avg_delay_sec > 35:
+            los = "D"
+        elif avg_delay_sec > 20:
+            los = "C"
+        elif avg_delay_sec > 10:
+            los = "B"
+            
+        # Volume to capacity ratio - increases with vehicle count
+        vc_ratio = min(0.95, vehicle_count / 30)  # Cap at 0.95
+        
         # Prepare response with traffic analysis
         response = {
             "detections": detections,
@@ -282,7 +317,14 @@ async def process_image(image_data, confidence_threshold=0.25, camera_id=None):
                 "density": traffic_density,
                 "vehicle_count": vehicle_count,
                 "counts_by_type": traffic_count,
-                "camera_id": camera_id
+                "camera_id": camera_id,
+                "metrics": {
+                    "level_of_service": los,
+                    "average_delay": round(avg_delay_sec, 1) if avg_delay_sec else None,
+                    "queue_length": round(queue_length) if queue_length else None,
+                    "average_speed": round(avg_speed_kph, 1) if avg_speed_kph else None,
+                    "vc_ratio": round(vc_ratio, 2)
+                }
             }
         }
         

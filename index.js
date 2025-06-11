@@ -14,6 +14,7 @@ const __dirname = dirname(__filename);
 const clients = {
   cameras: new Map(), // Map to store camera clients with their IDs: Map<cameraId, ws>
   browsers: new Set(), // Set of browser clients
+  admins: new Set(), // Set of admin clients
   ai: null // AI WebSocket connection
 };
 
@@ -47,142 +48,254 @@ const objectDetection = {
 const cameraMetadata = new Map(); // Map<cameraId, {info}>
 let pendingFrames = new Map(); // For handling metadata + binary frame pairs
 
-// Function to start the Python API
-function startPythonAPI() {
-  // Check if Python process is already running
-  if (objectDetection.pythonProcess !== null && 
-      objectDetection.pythonProcess.exitCode === null) {
-    console.log("Python detection API is already running");
-    return;
-  }
+// Admin dashboard data - track traffic analytics
+const adminData = {
+  stats: {
+    activeIntersections: 4,
+    connectedCameras: 0,
+    trafficVolume: 0,
+    systemStatus: 'operational'
+  },
+  vehicleComposition: {
+    car: 0,
+    truck: 0,
+    bus: 0,
+    motorcycle: 0,
+    bicycle: 0,
+    person: 0
+  },
+  hourlyTraffic: {}, // Will store hourly data
+  metrics: {
+    levelOfService: 'B',
+    averageDelay: 18.5,
+    queueLength: 42,
+    vcRatio: 0.78,
+    pceValue: 1.34,
+    criticalGap: 4.5,
+    saturationFlow: 1850,
+    intersectionCapacity: 2400
+  },
+  intersectionStatus: {
+    'intersection-1': {
+      eastWest: 'GREEN',
+      northSouth: 'RED',
+      cycleDuration: 60,
+      flowRate: 5
+    },
+    'intersection-2': {
+      eastWest: 'RED',
+      northSouth: 'GREEN',
+      cycleDuration: 55,
+      flowRate: 7
+    },
+    'intersection-3': {
+      eastWest: 'YELLOW',
+      northSouth: 'RED',
+      cycleDuration: 50,
+      flowRate: 4
+    },
+    'intersection-4': {
+      eastWest: 'RED',
+      northSouth: 'GREEN',
+      cycleDuration: 65,
+      flowRate: 6
+    }
+  },
+  logs: [] // System logs
+};
 
-  console.log("Starting Python detection API...");
+// Initialize hourly traffic data
+function initHourlyData() {
+  const hours = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', 
+                 '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+  hours.forEach(hour => {
+    adminData.hourlyTraffic[hour] = Math.floor(Math.random() * 300) + 100;
+  });
+}
+initHourlyData();
+
+// Add system log entry
+function addSystemLog(message, level = 'info') {
+  const logEntry = {
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    message,
+    level
+  };
   
-  const pythonScript = join(__dirname, 'ai', 'object_detection_api.py');
+  adminData.logs.unshift(logEntry); // Add to beginning of array
   
-  // Determine Python executable based on platform
-  let pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  // Keep logs under a certain size
+  if (adminData.logs.length > 100) {
+    adminData.logs.pop(); // Remove oldest entry
+  }
   
-  // Try to verify Python is available before starting
-  try {
-    // First, check if the script exists
-    const scriptExists = existsSync(pythonScript);
-    if (!scriptExists) {
-      throw new Error(`Python script not found at path: ${pythonScript}`);
+  // Send to admin clients
+  broadcastToAdmins({
+    type: 'system_log',
+    ...logEntry
+  });
+}
+
+// Update admin data based on detection results
+function updateAdminDataFromDetection(results, cameraId) {
+  if (!results || !results.detections) return;
+  
+  // Count vehicles by type
+  const counts = {};
+  results.detections.forEach(detection => {
+    const className = detection.class_name.toLowerCase();
+    counts[className] = (counts[className] || 0) + 1;
+  });
+  
+  // Update vehicle composition
+  Object.keys(counts).forEach(className => {
+    if (adminData.vehicleComposition[className] !== undefined) {
+      adminData.vehicleComposition[className] += counts[className];
+    } else {
+      adminData.vehicleComposition[className] = counts[className];
+    }
+  });
+  
+  // Update total traffic volume
+  const newVehicles = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  adminData.stats.trafficVolume += newVehicles;
+  
+  // Update hourly traffic - add to current hour
+  const currentHour = new Date().getHours().toString().padStart(2, '0') + ':00';
+  if (adminData.hourlyTraffic[currentHour] !== undefined) {
+    adminData.hourlyTraffic[currentHour] += newVehicles;
+  } else {
+    adminData.hourlyTraffic[currentHour] = newVehicles;
+  }
+  
+  // Update traffic metrics based on detection results
+  if (results.traffic_analysis) {
+    const { density, vehicle_count } = results.traffic_analysis;
+    
+    // Update Level of Service based on traffic density
+    if (density === 'high') {
+      adminData.metrics.levelOfService = vehicle_count > 15 ? 'F' : 'E';
+      adminData.metrics.averageDelay = 55 + Math.random() * 20;
+      adminData.metrics.queueLength = 75 + Math.floor(Math.random() * 25);
+      adminData.metrics.vcRatio = 0.9 + Math.random() * 0.1;
+    } else if (density === 'moderate') {
+      adminData.metrics.levelOfService = 'C';
+      adminData.metrics.averageDelay = 25 + Math.random() * 10;
+      adminData.metrics.queueLength = 35 + Math.floor(Math.random() * 15);
+      adminData.metrics.vcRatio = 0.65 + Math.random() * 0.15;
+    } else {
+      adminData.metrics.levelOfService = 'B';
+      adminData.metrics.averageDelay = 15 + Math.random() * 5;
+      adminData.metrics.queueLength = 20 + Math.floor(Math.random() * 10);
+      adminData.metrics.vcRatio = 0.4 + Math.random() * 0.1;
     }
     
-    // Clear any previous Python process reference
-    objectDetection.pythonProcess = null;
-    
-    // Start the Python script
-    const pythonProcess = spawn(pythonCmd, [pythonScript], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: join(__dirname, 'ai'),
-      // Set higher buffer size for outputs
-      env: { ...process.env, PYTHONUNBUFFERED: "1" }
-    });
-    
-    // Store reference to the process
-    objectDetection.pythonProcess = pythonProcess;
-    
-    // Handle Python process output
-    pythonProcess.stdout.on('data', (data) => {
-      const message = data.toString().trim();
-      console.log(`Python API: ${message}`);
-      
-      // Check for specific startup messages that indicate the server is ready
-      if (message.includes('Application startup complete') || 
-          message.includes('Uvicorn running on') ||
-          message.includes('Model loaded successfully')) {
-        console.log('Detected Python API startup message. API may be ready soon.');
-      }
-    });
-    
-    pythonProcess.stderr.on('data', (data) => {
-      const error = data.toString().trim();
-      console.error(`Python API Error: ${error}`);
-      
-      // Don't treat warnings as fatal errors
-      if (error.toLowerCase().includes('warning')) {
-        return;
-      }
-      
-      // Check for specific error messages
-      if (error.includes('Address already in use')) {
-        console.error('Python API port 8000 is already in use. Possibly another instance is running.');
-        objectDetection.enabled = false;
-      }
-    });
-    
-    // Handle process exit
-    pythonProcess.on('close', (code) => {
-      console.log(`Python API process exited with code ${code}`);
-      objectDetection.pythonProcess = null;
-      objectDetection.enabled = false;
-      
-      // Attempt to restart if it crashed
-      if (code !== 0) {
-        console.log("Attempting to restart Python API in 5 seconds...");
-        setTimeout(() => {
-          startPythonAPI();
-        }, 5000);
-      }
-    });
-    
-    // Handle process errors
-    pythonProcess.on('error', (err) => {
-      console.error(`Failed to start Python process: ${err.message}`);
-      objectDetection.pythonProcess = null;
-      objectDetection.enabled = false;
-    });
-    
-    console.log("Python API process started, waiting for it to initialize...");
-    
-    // Setup health check retry mechanism
-    let healthCheckAttempt = 0;
-    const maxHealthCheckAttempts = 10;
-    const healthCheckInterval = setInterval(async () => {
-      healthCheckAttempt++;
-      console.log(`Performing health check attempt ${healthCheckAttempt}...`);
-      
-      try {
-        // Check if the API is running
-        const response = await axios.get('http://localhost:8000/health', { 
-          timeout: 3000,
-          validateStatus: () => true // Accept any status code
-        });
-        
-        if (response.status === 200 && response.data && response.data.status === 'healthy') {
-          console.log("Python API is running and healthy");
-          objectDetection.enabled = true;
-          clearInterval(healthCheckInterval);
-        } else {
-          console.log(`API responded with status: ${response.status}, but may not be fully ready yet`);
-        }
-      } catch (error) {
-        if (error.code === 'ECONNREFUSED') {
-          console.log("API server not accepting connections yet, will retry...");
-        } else {
-          console.error("Failed to connect to Python API:", error.message);
-        }
-      }
-      
-      // If we've reached max attempts, stop trying
-      if (healthCheckAttempt >= maxHealthCheckAttempts) {
-        clearInterval(healthCheckInterval);
-        console.error(`Failed to connect to Python API after ${maxHealthCheckAttempts} attempts.`);
-        
-        if (objectDetection.pythonProcess && objectDetection.pythonProcess.exitCode === null) {
-          console.log("Python process is still running but API is not responsive. You may need to check for errors.");
-        }
-      }
-    }, 3000); // Check every 3 seconds
-    
-  } catch (error) {
-    console.error(`Failed to start Python API: ${error.message}`);
-    objectDetection.pythonProcess = null;
-    objectDetection.enabled = false;
+    // Add to log for significant traffic events
+    if (density === 'high' && vehicle_count > 10) {
+      addSystemLog(`High traffic detected at camera ${cameraId}: ${vehicle_count} vehicles`, 'warning');
+    }
   }
+  
+  // Broadcast updated data to admin clients
+  broadcastAdminDataUpdate();
+}
+
+// Process AI detection response - updated to include admin data updates
+function processAIResponse(message) {
+  if (!message || !message.results) return;
+  
+  const results = message.results;
+  const cameraId = message.camera_id;
+  
+  if (!cameraId) return;
+  
+  // Store detection results
+  objectDetection.detectionResults.set(cameraId, results);
+  
+  // Broadcast detection results to browser clients
+  broadcastDetectionResults(cameraId, results);
+  
+  // Update admin data 
+  updateAdminDataFromDetection(results, cameraId);
+  
+  // Handle traffic redirection based on analysis
+  if (results.traffic_analysis) {
+    handleTrafficRedirection(cameraId, results.traffic_analysis);
+  }
+}
+
+// Broadcast admin data update to all admin clients
+function broadcastAdminDataUpdate() {
+  broadcastToAdmins({
+    type: 'admin_data',
+    data: adminData
+  });
+}
+
+// Broadcast to all admin clients
+function broadcastToAdmins(message) {
+  const messageString = typeof message === 'string' ? message : JSON.stringify(message);
+  
+  for (const admin of clients.admins) {
+    if (admin.readyState === WebSocket.OPEN) {
+      try {
+        admin.send(messageString);
+      } catch (error) {
+        console.error(`Error sending to admin: ${error.message}`);
+      }
+    }
+  }
+}
+
+// Handle traffic light control request from admin
+function handleTrafficLightControl(message, ws) {
+  const { intersectionId, cycleDuration, flowRate } = message;
+  
+  // Update intersection status
+  if (adminData.intersectionStatus[intersectionId]) {
+    adminData.intersectionStatus[intersectionId].cycleDuration = cycleDuration;
+    adminData.intersectionStatus[intersectionId].flowRate = flowRate;
+    
+    // Add to system logs
+    addSystemLog(`Updated traffic light settings for ${intersectionId}: cycle ${cycleDuration}s, flow rate ${flowRate}`);
+    
+    // In a real system, this would send commands to the physical traffic lights
+    console.log(`Traffic light control: ${intersectionId}, cycle: ${cycleDuration}s, flow: ${flowRate}`);
+    
+    // Broadcast updated status to all admins
+    broadcastAdminDataUpdate();
+    
+    return true;
+  }
+  
+  return false;
+}
+
+// Handle emergency mode toggle
+function handleEmergencyMode(message) {
+  const { intersectionId, enabled } = message;
+  
+  // Update intersection status
+  if (adminData.intersectionStatus[intersectionId]) {
+    // In emergency mode, set traffic lights to prioritize one direction
+    if (enabled) {
+      adminData.intersectionStatus[intersectionId].eastWest = 'GREEN';
+      adminData.intersectionStatus[intersectionId].northSouth = 'RED';
+      
+      // Add to system logs
+      addSystemLog(`Emergency mode activated for ${intersectionId}`, 'warning');
+    } else {
+      // Return to normal operation
+      addSystemLog(`Emergency mode deactivated for ${intersectionId}`, 'info');
+    }
+    
+    // Broadcast updated status to all admins
+    broadcastAdminDataUpdate();
+    
+    return true;
+  }
+  
+  return false;
 }
 
 // Create HTTP server with error handling
@@ -239,6 +352,9 @@ const wss = new WebSocketServer({
 
 // Send camera information to browsers
 function sendCameraInfo(cameraId) {
+  // Update admin stats
+  adminData.stats.connectedCameras = clients.cameras.size;
+
   // If specific camera requested, send just that one
   if (cameraId && cameraMetadata.has(cameraId)) {
     const cameraInfo = cameraMetadata.get(cameraId);
@@ -277,12 +393,24 @@ function sendCameraInfo(cameraId) {
     
     const infoString = JSON.stringify(cameraList);
     
+    // Send to browsers
     for (const browser of clients.browsers) {
       if (browser.readyState === WebSocket.OPEN) {
         try {
           browser.send(infoString);
         } catch (error) {
           console.error(`Error sending camera list: ${error}`);
+        }
+      }
+    }
+    
+    // Also send to admin clients
+    for (const admin of clients.admins) {
+      if (admin.readyState === WebSocket.OPEN) {
+        try {
+          admin.send(infoString);
+        } catch (error) {
+          console.error(`Error sending camera list to admin: ${error.message}`);
         }
       }
     }
@@ -462,30 +590,6 @@ function sendFrameToAI(frame, cameraId) {
 }
 
 /**
- * Process AI detection response
- * @param {Object} message - Detection response from AI
- */
-function processAIResponse(message) {
-  if (!message || !message.results) return;
-  
-  const results = message.results;
-  const cameraId = message.camera_id;
-  
-  if (!cameraId) return;
-  
-  // Store detection results
-  objectDetection.detectionResults.set(cameraId, results);
-  
-  // Broadcast detection results to browser clients
-  broadcastDetectionResults(cameraId, results);
-  
-  // Handle traffic redirection based on analysis
-  if (results.traffic_analysis) {
-    handleTrafficRedirection(cameraId, results.traffic_analysis);
-  }
-}
-
-/**
  * Broadcast detection results to all connected browser clients
  * @param {string} cameraId - ID of the camera source
  * @param {Object} results - Detection results from the API
@@ -552,11 +656,12 @@ function isJpegData(data) {
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   
-  // Determine client type (camera, browser, or ai)
+  // Determine client type (camera, browser, admin, or ai)
   const url = new URL(`http://localhost${req.url}`);
   const clientType = url.searchParams.get('type') || 'browser';
   const isCamera = clientType === 'camera';
   const isAI = clientType === 'ai';
+  const isAdmin = clientType === 'admin';
   
   // Send ping frame every 30 seconds to keep connection alive
   const pingInterval = setInterval(() => {
@@ -670,6 +775,91 @@ wss.on('connection', (ws, req) => {
       }
     });
   }
+  else if (isAdmin) {
+    // Admin client
+    clients.admins.add(ws);
+    console.log(`Admin client connected: ${clientIp}`);
+    
+    // Send initial admin data
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({
+          type: 'admin_data',
+          data: adminData
+        }));
+        
+        // Send camera list
+        sendCameraInfo();
+      } catch (error) {
+        console.error(`Error sending initial admin data: ${error.message}`);
+      }
+    }
+    
+    // Handle admin messages
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        
+        console.log(`Received admin message: ${data.type}`);
+        
+        // Handle different message types
+        switch (data.type) {
+          case 'get_admin_data':
+            // Send all admin data
+            ws.send(JSON.stringify({
+              type: 'admin_data',
+              data: adminData
+            }));
+            break;
+            
+          case 'admin_connected':
+            // Admin client identified itself
+            console.log(`Admin client identified: ${clientIp}`);
+            addSystemLog('Admin connected to dashboard', 'info');
+            break;
+            
+          case 'traffic_light_control':
+            // Handle traffic light control request
+            handleTrafficLightControl(data, ws);
+            break;
+            
+          case 'emergency_mode':
+            // Handle emergency mode toggle
+            handleEmergencyMode(data);
+            break;
+            
+          case 'auto_control':
+            // Handle auto control request
+            addSystemLog(`Auto traffic control activated for ${data.intersectionId}`, 'info');
+            break;
+            
+          case 'activate_cameras':
+            // Handle camera activation request
+            addSystemLog(`Cameras activated for ${data.intersectionId}`, 'info');
+            break;
+            
+          case 'change_traffic_pattern':
+            // Handle traffic pattern change
+            addSystemLog(`Traffic pattern changed for ${data.intersectionId}`, 'info');
+            break;
+            
+          case 'update_detection_settings':
+            // Update object detection settings
+            if (data.settings) {
+              objectDetection.confidenceThreshold = data.settings.confidenceThreshold;
+              console.log(`Detection settings updated: confidence=${objectDetection.confidenceThreshold}`);
+              addSystemLog(`Detection settings updated by admin`, 'info');
+            }
+            break;
+            
+          default:
+            console.log(`Unknown admin message type: ${data.type}`);
+        }
+      } catch (error) {
+        console.error(`Error processing admin message: ${error}`);
+      }
+    });
+  }
   else {
     // Browser client
     clients.browsers.add(ws);
@@ -740,6 +930,10 @@ wss.on('connection', (ws, req) => {
       clients.cameras.delete(disconnectedCameraId);
       console.log(`Camera ${disconnectedCameraId} disconnected - Code: ${code}`);
       
+      // Update admin stats
+      adminData.stats.connectedCameras = clients.cameras.size;
+      broadcastAdminDataUpdate();
+      
       // Notify browsers about camera disconnection
       for (const browser of clients.browsers) {
         if (browser.readyState === WebSocket.OPEN) {
@@ -759,21 +953,17 @@ wss.on('connection', (ws, req) => {
       clients.browsers.delete(ws);
       console.log(`Browser client disconnected - Code: ${code}`);
     }
+    else if (clients.admins.has(ws)) {
+      clients.admins.delete(ws);
+      console.log(`Admin client disconnected - Code: ${code}`);
+      addSystemLog('Admin disconnected from dashboard', 'info');
+    }
     else if (clients.ai === ws) {
       clients.ai = null;
       console.log(`AI service disconnected - Code: ${code}`);
+      addSystemLog('AI detection service disconnected', 'error');
     }
   });
-});
-
-// Add special endpoint for AI connections
-wss.on('upgrade', (request, socket, head) => {
-  const url = new URL(`http://localhost${request.url}`);
-  const path = url.pathname;
-  
-  if (path === '/ai') {
-    console.log('AI service attempting to connect via WebSocket');
-  }
 });
 
 // Check health of the object detection API
@@ -788,6 +978,74 @@ async function checkDetectionApiHealth() {
   }
 }
 
+// Start Python detection API
+function startPythonAPI() {
+  try {
+    // Check if the Python API is already running by making a health check request
+    checkDetectionApiHealth().then(isRunning => {
+      if (isRunning) {
+        console.log('Object detection API is already running');
+        return;
+      }
+      
+      console.log('Starting Python object detection API...');
+      
+      // Determine path to the Python script
+      const pythonScriptPath = join(__dirname, 'ai', 'object_detection_api.py');
+      
+      // Check if the script exists
+      if (!existsSync(pythonScriptPath)) {
+        console.error(`Python script not found at ${pythonScriptPath}`);
+        addSystemLog(`Failed to start detection API: Script not found`, 'error');
+        return;
+      }
+      
+      // Determine Python executable - use 'python' or 'python3' depending on the system
+      const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
+      
+      // Spawn the Python process
+      objectDetection.pythonProcess = spawn(pythonCommand, [pythonScriptPath], {
+        stdio: 'pipe',
+        detached: false  // Keep attached to parent process
+      });
+      
+      // Handle Python process output
+      objectDetection.pythonProcess.stdout.on('data', (data) => {
+        console.log(`Python API: ${data.toString().trim()}`);
+      });
+      
+      objectDetection.pythonProcess.stderr.on('data', (data) => {
+        console.error(`Python API Error: ${data.toString().trim()}`);
+      });
+      
+      // Handle process exit
+      objectDetection.pythonProcess.on('exit', (code, signal) => {
+        console.log(`Python API process exited with code ${code} and signal ${signal}`);
+        objectDetection.pythonProcess = null;
+        
+        if (code !== 0) {
+          addSystemLog(`Detection API exited unexpectedly with code ${code}`, 'error');
+        }
+      });
+      
+      // Handle process error
+      objectDetection.pythonProcess.on('error', (err) => {
+        console.error(`Failed to start Python API: ${err.message}`);
+        objectDetection.pythonProcess = null;
+        addSystemLog(`Failed to start detection API: ${err.message}`, 'error');
+      });
+      
+      console.log('Python object detection API process started');
+      
+      // Add to system log
+      addSystemLog('Object detection service starting...', 'info');
+    });
+  } catch (error) {
+    console.error(`Error starting Python API: ${error.message}`);
+    addSystemLog(`Failed to start detection API: ${error.message}`, 'error');
+  }
+}
+
 // Server error handling
 server.on('error', (error) => {
   console.error(`Server error: ${error.message}`);
@@ -799,18 +1057,23 @@ server.listen(PORT, async () => {
   console.log(`Server listening on port ${PORT}`);
   console.log(`WebSocket server ready for connections`);
   
+  // Add initial system log
+  addSystemLog('System initialized successfully', 'success');
+  
   // Start Python detection API
   startPythonAPI();
   
-  // Wait a bit longer for the Python API to start (increased from 6000ms to 10000ms)
+  // Wait a bit longer for the Python API to start
   setTimeout(async () => {
     // Check if the object detection API is available
     const apiHealthy = await checkDetectionApiHealth();
     if (apiHealthy) {
       console.log('Object detection API is ready. Detection enabled.');
       objectDetection.enabled = true;
+      addSystemLog('AI detection service connected and ready', 'success');
     } else {
       console.log('Object detection API is not available. Detection disabled.');
+      addSystemLog('AI detection service unavailable', 'error');
       
       // Try again after a short delay in case it's still starting up
       setTimeout(async () => {
@@ -818,6 +1081,7 @@ server.listen(PORT, async () => {
         if (retryHealthy) {
           console.log('Object detection API is now ready on second attempt. Detection enabled.');
           objectDetection.enabled = true;
+          addSystemLog('AI detection service connected and ready', 'success');
         }
       }, 5000);
     }

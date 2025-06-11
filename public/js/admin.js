@@ -1,582 +1,1107 @@
 // Smart Road System - Admin Dashboard JavaScript
 
-// DOM Elements
-const currentTimeEl = document.getElementById('current-time');
-const systemStatusEl = document.getElementById('system-status');
-const intersectionSelect = document.getElementById('intersection-select');
-const activateCamerasBtn = document.getElementById('activate-cameras');
-const trafficPatternBtn = document.getElementById('traffic-pattern');
-const emergencyModeBtn = document.getElementById('emergency-mode');
-const autoControlBtn = document.getElementById('auto-control');
-const cycleDurationInput = document.getElementById('cycle-duration');
-const cycleValueEl = document.getElementById('cycle-value');
-const flowRateInput = document.getElementById('flow-rate');
-const flowValueEl = document.getElementById('flow-value');
-const confidenceThresholdInput = document.getElementById('confidence-threshold');
-const thresholdValueEl = document.getElementById('threshold-value');
-const showDetectionsCheckbox = document.getElementById('show-detections');
-const enableAnalyticsCheckbox = document.getElementById('enable-analytics');
-const saveDataCheckbox = document.getElementById('save-data');
-const systemLogEl = document.getElementById('system-log');
-const clearLogBtn = document.getElementById('clear-log');
-const intersectionContainer = document.getElementById('intersection-simulation');
-
-// Traffic Light Elements
-const eastWestStatusEl = document.getElementById('east-west-status');
-const northSouthStatusEl = document.getElementById('north-south-status');
-const eastRed = document.getElementById('east-red');
-const eastYellow = document.getElementById('east-yellow');
-const eastGreen = document.getElementById('east-green');
-const westRed = document.getElementById('west-red');
-const westYellow = document.getElementById('west-yellow');
-const westGreen = document.getElementById('west-green');
-const northRed = document.getElementById('north-red');
-const northYellow = document.getElementById('north-yellow');
-const northGreen = document.getElementById('north-green');
-const southRed = document.getElementById('south-red');
-const southYellow = document.getElementById('south-yellow');
-const southGreen = document.getElementById('south-green');
-
-// State
-const state = {
-    isAutoControl: true,
-    isEmergencyMode: false,
-    cycleDuration: 60,
-    flowRate: 5,
-    confidenceThreshold: 50,
-    showDetections: true,
-    enableAnalytics: true,
-    saveData: true,
-    currentIntersection: 'intersection-1',
-    trafficLightState: 'east-west',  // 'east-west' or 'north-south'
-    vehicleCount: {
-        cars: 65,
-        trucks: 20,
-        buses: 15
+// Global WebSocket connection
+let socket;
+let trafficData = {
+    vehicleCounts: {},
+    hourlyData: {},
+    metrics: {
+        levelOfService: 'B',
+        averageDelay: 18.5,
+        queueLength: 42,
+        vcRatio: 0.78,
+        pceValue: 1.34,
+        criticalGap: 4.5,
+        saturationFlow: 1850,
+        intersectionCapacity: 2400
     },
-    hourlyTraffic: [150, 120, 90, 75, 60, 90, 200, 350, 320, 280, 220, 200, 
-                   210, 230, 280, 330, 390, 360, 310, 240, 190, 170, 160, 140],
-    vehicles: [],
-    logs: [],
-    trafficLightInterval: null
+    intersectionStatus: {
+        'intersection-1': {
+            eastWest: 'GREEN',
+            northSouth: 'RED',
+            cycleDuration: 60,
+            flowRate: 5
+        },
+        'intersection-2': {
+            eastWest: 'RED',
+            northSouth: 'GREEN',
+            cycleDuration: 55,
+            flowRate: 7
+        }
+    }
 };
 
-// Initialize the dashboard
-function initDashboard() {
-    updateCurrentTime();
-    setInterval(updateCurrentTime, 1000);
+document.addEventListener('DOMContentLoaded', () => {
+    // Initialize UI components
+    initUI();
     
-    initCharts();
-    setupEventListeners();
-    startTrafficSimulation();
-    addLog('System initialized successfully', 'success');
-    addLog('Connected to simulation server', 'normal');
-    addLog('Camera 1 connected to intersection', 'normal');
-    addLog('Camera 2 connected to intersection', 'normal');
-    addLog('Traffic pattern analysis started', 'normal');
-    addLog('Traffic density increasing at Main Street intersection', 'warning');
+    // Connect to WebSocket server
+    connectToServer();
     
-    // Start traffic light cycle
-    startTrafficLightCycle();
+    // Load admin dashboard data
+    loadDashboardData();
+    
+    // Setup traffic simulation
+    setupTrafficSimulation();
+    
+    // Initialize system controls
+    initSystemControls();
+    
+    // Update time display
+    updateTime();
+    setInterval(updateTime, 1000);
+});
+
+// Connect to WebSocket server
+function connectToServer() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+    
+    console.log(`Connecting to WebSocket server at ${wsUrl}...`);
+    socket = new WebSocket(wsUrl);
+    
+    // Connection established
+    socket.onopen = () => {
+        console.log('Connected to the server');
+        showNotification('Connected to server', 'success');
+        
+        // Identify as admin client
+        socket.send(JSON.stringify({
+            type: 'admin_connected',
+            timestamp: new Date().toISOString()
+        }));
+        
+        // Request initial data
+        requestAdminData();
+    };
+    
+    // Message received
+    socket.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+            processServerMessage(message);
+        } catch (error) {
+            console.error('Error processing server message:', error);
+        }
+    };
+    
+    // Connection closed
+    socket.onclose = (event) => {
+        console.log('Disconnected from server:', event.code, event.reason);
+        showNotification('Disconnected from server. Reconnecting...', 'warning');
+        
+        // Try to reconnect after 5 seconds
+        setTimeout(connectToServer, 5000);
+    };
+    
+    // Connection error
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        showNotification('Connection error', 'error');
+    };
 }
 
-// Update current time
-function updateCurrentTime() {
-    const now = new Date();
-    const timeString = now.toLocaleTimeString();
-    currentTimeEl.textContent = timeString;
+// Request admin dashboard data
+function requestAdminData() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.error('Socket not connected');
+        return;
+    }
+    
+    // Request traffic analytics data
+    socket.send(JSON.stringify({
+        type: 'get_admin_data',
+        timestamp: new Date().toISOString()
+    }));
 }
 
-// Initialize charts
-function initCharts() {
-    // Vehicle Composition Chart
-    const vehicleCtx = document.getElementById('vehicle-composition-chart').getContext('2d');
-    const vehicleChart = new Chart(vehicleCtx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Cars', 'Trucks', 'Buses'],
-            datasets: [{
-                data: [state.vehicleCount.cars, state.vehicleCount.trucks, state.vehicleCount.buses],
-                backgroundColor: ['#FF5722', '#2196F3', '#9C27B0'],
-                borderWidth: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'right',
-                    labels: {
-                        color: '#FFFFFF'
-                    }
-                }
-            }
+// Process messages from the server
+function processServerMessage(message) {
+    const { type } = message;
+    
+    switch (type) {
+        case 'admin_data':
+            // Update dashboard with admin data
+            updateAdminDashboard(message.data);
+            break;
+            
+        case 'traffic_update':
+            // Update traffic data
+            updateTrafficData(message.data);
+            break;
+            
+        case 'detection_results':
+            // Handle detection results from AI
+            handleDetectionResults(message);
+            break;
+            
+        case 'system_log':
+            // Add to system log
+            addSystemLog(message.timestamp, message.message, message.level);
+            break;
+            
+        case 'traffic_redirection':
+            // Update traffic redirection data
+            updateTrafficRedirection(message);
+            break;
+            
+        case 'camera_list':
+            // Update camera list
+            updateCameraList(message.cameras);
+            break;
+    }
+}
+
+// Update admin dashboard with received data
+function updateAdminDashboard(data) {
+    console.log('Updating admin dashboard with data:', data);
+    
+    if (data.stats) {
+        // Update general stats
+        document.getElementById('active-intersections').textContent = data.stats.activeIntersections || 4;
+        document.getElementById('connected-cameras').textContent = data.stats.connectedCameras || 2;
+        document.getElementById('traffic-volume').textContent = data.stats.trafficVolume || '5,247';
+        
+        // Update system health status
+        const systemHealth = document.getElementById('system-health');
+        if (data.stats.systemStatus === 'operational') {
+            systemHealth.textContent = 'Operational';
+            systemHealth.className = 'text-green-500 text-2xl font-light';
+        } else if (data.stats.systemStatus === 'warning') {
+            systemHealth.textContent = 'Warning';
+            systemHealth.className = 'text-yellow-500 text-2xl font-light';
+        } else {
+            systemHealth.textContent = 'Error';
+            systemHealth.className = 'text-red-500 text-2xl font-light';
+        }
+    }
+    
+    if (data.vehicleComposition) {
+        trafficData.vehicleCounts = data.vehicleComposition;
+        updateVehicleCompositionChart();
+    }
+    
+    if (data.hourlyTraffic) {
+        trafficData.hourlyData = data.hourlyTraffic;
+        updateHourlyTrafficChart();
+    }
+    
+    if (data.metrics) {
+        updateTrafficMetrics(data.metrics);
+    }
+    
+    if (data.intersectionStatus) {
+        trafficData.intersectionStatus = data.intersectionStatus;
+        updateIntersectionStatus();
+    }
+    
+    // Update logs if provided
+    if (data.logs && Array.isArray(data.logs)) {
+        updateSystemLogs(data.logs);
+    }
+}
+
+// Update traffic data with real-time information
+function updateTrafficData(data) {
+    if (data.vehicleCounts) {
+        trafficData.vehicleCounts = data.vehicleCounts;
+        updateVehicleCompositionChart();
+    }
+    
+    if (data.hourlyData) {
+        trafficData.hourlyData = data.hourlyData;
+        updateHourlyTrafficChart();
+    }
+    
+    // Update traffic metrics if available
+    if (data.metrics) {
+        updateTrafficMetrics(data.metrics);
+    }
+}
+
+// Handle AI detection results
+function handleDetectionResults(message) {
+    const { detections, cameraId } = message;
+    if (!detections) return;
+    
+    // Count vehicles by type
+    const counts = {};
+    detections.forEach(detection => {
+        const className = detection.class_name.toLowerCase();
+        counts[className] = (counts[className] || 0) + 1;
+    });
+    
+    // Update vehicle counts
+    trafficData.vehicleCounts = {
+        ...trafficData.vehicleCounts,
+        ...counts
+    };
+    
+    // Update charts
+    updateVehicleCompositionChart();
+    
+    // Add to system log
+    const vehicleCount = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    if (vehicleCount > 0) {
+        addSystemLog(
+            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            `Detected ${vehicleCount} vehicles at camera ${cameraId}`,
+            'info'
+        );
+    }
+}
+
+// Update traffic metrics display
+function updateTrafficMetrics(metrics) {
+    if (metrics.levelOfService) {
+        const losElement = document.getElementById('level-of-service');
+        losElement.textContent = metrics.levelOfService;
+        
+        // Update color based on LOS value
+        switch(metrics.levelOfService) {
+            case 'A':
+                losElement.className = 'text-xl font-light text-green-500';
+                break;
+            case 'B':
+            case 'C':
+                losElement.className = 'text-xl font-light text-green-400';
+                break;
+            case 'D':
+                losElement.className = 'text-xl font-light text-yellow-500';
+                break;
+            case 'E':
+                losElement.className = 'text-xl font-light text-orange-500';
+                break;
+            case 'F':
+                losElement.className = 'text-xl font-light text-red-500';
+                break;
+            default:
+                losElement.className = 'text-xl font-light text-white';
+        }
+    }
+    
+    // Update other metrics
+    if (metrics.averageDelay !== undefined) {
+        document.getElementById('average-delay').textContent = metrics.averageDelay.toFixed(1);
+    }
+    
+    if (metrics.queueLength !== undefined) {
+        document.getElementById('queue-length').textContent = metrics.queueLength;
+    }
+    
+    if (metrics.vcRatio !== undefined) {
+        const vcElement = document.getElementById('v-c-ratio');
+        vcElement.textContent = metrics.vcRatio.toFixed(2);
+        
+        // Color based on v/c ratio
+        if (metrics.vcRatio < 0.5) {
+            vcElement.className = 'text-xl font-light text-green-500';
+        } else if (metrics.vcRatio < 0.85) {
+            vcElement.className = 'text-xl font-light text-yellow-500';
+        } else {
+            vcElement.className = 'text-xl font-light text-red-500';
+        }
+    }
+    
+    if (metrics.pceValue !== undefined) {
+        document.getElementById('pce-value').textContent = metrics.pceValue.toFixed(2);
+    }
+    
+    if (metrics.criticalGap !== undefined) {
+        document.getElementById('critical-gap').textContent = metrics.criticalGap.toFixed(1);
+    }
+    
+    if (metrics.saturationFlow !== undefined) {
+        document.getElementById('saturation-flow').textContent = metrics.saturationFlow.toLocaleString();
+    }
+    
+    if (metrics.intersectionCapacity !== undefined) {
+        document.getElementById('intersection-capacity').textContent = metrics.intersectionCapacity.toLocaleString();
+    }
+}
+
+// Update intersection status display
+function updateIntersectionStatus() {
+    const selectedId = document.getElementById('intersection-select').value;
+    const status = trafficData.intersectionStatus[selectedId] || trafficData.intersectionStatus['intersection-1'];
+    
+    if (status) {
+        // Update east-west and north-south status
+        const eastWestStatus = document.getElementById('east-west-status');
+        eastWestStatus.textContent = status.eastWest || 'RED';
+        eastWestStatus.className = status.eastWest === 'GREEN' ? 'text-green-500 font-medium' : 
+                                   status.eastWest === 'YELLOW' ? 'text-yellow-500 font-medium' :
+                                   'text-red-500 font-medium';
+        
+        const northSouthStatus = document.getElementById('north-south-status');
+        northSouthStatus.textContent = status.northSouth || 'RED';
+        northSouthStatus.className = status.northSouth === 'GREEN' ? 'text-green-500 font-medium' : 
+                                    status.northSouth === 'YELLOW' ? 'text-yellow-500 font-medium' :
+                                    'text-red-500 font-medium';
+        
+        // Update range inputs
+        const cycleDuration = document.getElementById('cycle-duration');
+        if (cycleDuration && status.cycleDuration) {
+            cycleDuration.value = status.cycleDuration;
+            document.getElementById('cycle-value').textContent = `${status.cycleDuration}s`;
+        }
+        
+        const flowRate = document.getElementById('flow-rate');
+        if (flowRate && status.flowRate !== undefined) {
+            flowRate.value = status.flowRate;
+            
+            // Update flow text based on value
+            const flowText = status.flowRate <= 3 ? 'Light' : 
+                             status.flowRate <= 7 ? 'Medium' : 'Heavy';
+            document.getElementById('flow-value').textContent = flowText;
+        }
+    }
+}
+
+// Vehicle composition chart
+let vehicleCompositionChart = null;
+
+function updateVehicleCompositionChart() {
+    const ctx = document.getElementById('vehicle-composition-chart')?.getContext('2d');
+    if (!ctx) return;
+    
+    // Get vehicle counts from data
+    const vehicleCounts = trafficData.vehicleCounts;
+    
+    // Prepare data for chart
+    const labels = [];
+    const data = [];
+    const backgroundColors = [
+        'rgba(75, 192, 192, 0.7)',
+        'rgba(54, 162, 235, 0.7)',
+        'rgba(255, 206, 86, 0.7)',
+        'rgba(255, 99, 132, 0.7)',
+        'rgba(153, 102, 255, 0.7)',
+        'rgba(255, 159, 64, 0.7)'
+    ];
+    
+    // Map the traffic classes to proper names
+    const classMapping = {
+        'car': 'Cars',
+        'truck': 'Trucks',
+        'bus': 'Buses',
+        'motorcycle': 'Motorcycles',
+        'bicycle': 'Bicycles',
+        'person': 'Pedestrians'
+    };
+    
+    // Add classes in a specific order
+    ['car', 'truck', 'bus', 'motorcycle', 'bicycle', 'person'].forEach(cls => {
+        if (vehicleCounts[cls] !== undefined) {
+            labels.push(classMapping[cls] || cls);
+            data.push(vehicleCounts[cls]);
         }
     });
     
-    // Hourly Traffic Chart
-    const hourlyCtx = document.getElementById('hourly-traffic-chart').getContext('2d');
-    const hourlyChart = new Chart(hourlyCtx, {
-        type: 'line',
-        data: {
-            labels: Array.from({length: 24}, (_, i) => `${i}:00`),
-            datasets: [{
-                label: 'Traffic Volume',
-                data: state.hourlyTraffic,
-                backgroundColor: 'rgba(76, 175, 80, 0.2)',
-                borderColor: '#4CAF50',
-                borderWidth: 2,
-                pointRadius: 3,
-                pointBackgroundColor: '#4CAF50',
-                tension: 0.4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
+    // Add any other classes not in our predefined list
+    Object.keys(vehicleCounts).forEach(cls => {
+        if (!['car', 'truck', 'bus', 'motorcycle', 'bicycle', 'person'].includes(cls)) {
+            labels.push(cls.charAt(0).toUpperCase() + cls.slice(1));
+            data.push(vehicleCounts[cls]);
+        }
+    });
+    
+    // Create or update chart
+    if (vehicleCompositionChart) {
+        vehicleCompositionChart.data.labels = labels;
+        vehicleCompositionChart.data.datasets[0].data = data;
+        vehicleCompositionChart.update();
+    } else {
+        vehicleCompositionChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    borderColor: 'rgba(20, 20, 20, 0.8)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            color: 'white',
+                            font: {
+                                size: 10
+                            }
+                        }
                     },
-                    ticks: {
-                        color: '#AAAAAA',
-                        maxRotation: 0,
-                        callback: (value, index) => {
-                            return index % 3 === 0 ? value : '';
+                    title: {
+                        display: true,
+                        text: 'Vehicle Types Detected',
+                        color: 'white',
+                        font: {
+                            size: 14
+                        }
+                    }
+                }}
+            });
+    }
+}
+
+// Hourly traffic chart
+let hourlyTrafficChart = null;
+
+function updateHourlyTrafficChart() {
+    const ctx = document.getElementById('hourly-traffic-chart')?.getContext('2d');
+    if (!ctx) return;
+    
+    // Get hourly data or use demo data
+    const hourlyData = trafficData.hourlyData;
+    let hours = [];
+    let vehicles = [];
+    
+    if (Object.keys(hourlyData).length > 0) {
+        hours = Object.keys(hourlyData);
+        vehicles = hours.map(hour => hourlyData[hour]);
+    } else {
+        // Demo data if no real data available
+        hours = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', 
+                 '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+        vehicles = [120, 350, 580, 430, 320, 290, 380, 320, 290, 310, 410, 590, 490, 280];
+    }
+    
+    // Create or update chart
+    if (hourlyTrafficChart) {
+        hourlyTrafficChart.data.labels = hours;
+        hourlyTrafficChart.data.datasets[0].data = vehicles;
+        hourlyTrafficChart.update();
+    } else {
+        hourlyTrafficChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: hours,
+                datasets: [{
+                    label: 'Traffic Volume',
+                    data: vehicles,
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 2,
+                    pointBackgroundColor: 'rgba(75, 192, 192, 1)',
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    title: {
+                        display: true,
+                        text: 'Vehicles Per Hour',
+                        color: 'white',
+                        font: {
+                            size: 14
                         }
                     }
                 },
-                y: {
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: 'rgba(255, 255, 255, 0.7)'
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
                     },
-                    ticks: {
-                        color: '#AAAAAA'
+                    x: {
+                        ticks: {
+                            color: 'rgba(255, 255, 255, 0.7)'
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
                     }
                 }
-            },
-            plugins: {
-                legend: {
-                    display: false
-                }
-            }
-        }
+    }});
+    }
+}
+
+// Update camera list
+function updateCameraList(cameras) {
+    // Update camera count
+    document.getElementById('connected-cameras').textContent = cameras.filter(c => c.connected).length;
+    
+    // Add to system log
+    addSystemLog(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        `Updated camera list: ${cameras.length} cameras, ${cameras.filter(c => c.connected).length} connected`,
+        'info'
+    );
+}
+
+// Update traffic redirection status
+function updateTrafficRedirection(data) {
+    // Add to system log for significant traffic changes
+    if (data.status === 'high') {
+        addSystemLog(
+            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            `Heavy traffic detected at camera ${data.cameraId} - ${data.vehicleCount} vehicles`,
+            'warning'
+        );
+    }
+    
+    // Update traffic metrics based on new data
+    const metrics = trafficData.metrics;
+    
+    // Adjust LOS based on traffic density
+    if (data.status === 'high') {
+        metrics.levelOfService = 'E';
+        metrics.averageDelay = 55 + Math.random() * 10;
+        metrics.queueLength = 80 + Math.floor(Math.random() * 20);
+        metrics.vcRatio = 0.92 + Math.random() * 0.08;
+    } else if (data.status === 'moderate') {
+        metrics.levelOfService = 'C';
+        metrics.averageDelay = 25 + Math.random() * 10;
+        metrics.queueLength = 45 + Math.floor(Math.random() * 15);
+        metrics.vcRatio = 0.65 + Math.random() * 0.15;
+    } else {
+        metrics.levelOfService = 'B';
+        metrics.averageDelay = 15 + Math.random() * 5;
+        metrics.queueLength = 20 + Math.floor(Math.random() * 10);
+        metrics.vcRatio = 0.4 + Math.random() * 0.1;
+    }
+    
+    // Update display
+    updateTrafficMetrics(metrics);
+}
+
+// Update system logs from server data
+function updateSystemLogs(logs) {
+    const logContainer = document.getElementById('system-log');
+    if (!logContainer) return;
+    
+    // Clear existing logs
+    logContainer.innerHTML = '';
+    
+    // Add each log entry
+    logs.forEach(log => {
+        addSystemLog(log.timestamp, log.message, log.level);
     });
 }
 
-// Setup event listeners
-function setupEventListeners() {
-    // Intersection selection
-    intersectionSelect.addEventListener('change', function() {
-        state.currentIntersection = this.value;
-        addLog(`Switched to ${intersectionSelect.options[intersectionSelect.selectedIndex].text}`, 'normal');
+// Add a log entry to the system log
+function addSystemLog(timestamp, message, level = 'info') {
+    const logContainer = document.getElementById('system-log');
+    if (!logContainer) return;
+    
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-gray-700';
+    
+    // Determine text color based on log level
+    let messageClass = 'text-white';
+    if (level === 'error') messageClass = 'text-red-400';
+    if (level === 'warning') messageClass = 'text-yellow-400';
+    if (level === 'success') messageClass = 'text-green-400';
+    
+    tr.innerHTML = `
+        <td class="p-2 text-gray-500 w-24">${timestamp}</td>
+        <td class="p-2 ${messageClass}">${message}</td>
+    `;
+    
+    // Add to the top of the log for most recent first
+    logContainer.insertBefore(tr, logContainer.firstChild);
+    
+    // Limit number of log entries to prevent performance issues
+    const maxLogs = 100;
+    while (logContainer.children.length > maxLogs) {
+        logContainer.removeChild(logContainer.lastChild);
+    }
+}
+
+// Send traffic light control updates to server
+function sendTrafficLightUpdate() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.error('Socket not connected');
+        return;
+    }
+    
+    const selectedId = document.getElementById('intersection-select').value;
+    const cycleDuration = parseInt(document.getElementById('cycle-duration').value);
+    const flowRate = parseInt(document.getElementById('flow-rate').value);
+    
+    // Send update to server
+    socket.send(JSON.stringify({
+        type: 'traffic_light_control',
+        intersectionId: selectedId,
+        cycleDuration: cycleDuration,
+        flowRate: flowRate,
+        timestamp: new Date().toISOString()
+    }));
+    
+    // Update local data
+    if (trafficData.intersectionStatus[selectedId]) {
+        trafficData.intersectionStatus[selectedId].cycleDuration = cycleDuration;
+        trafficData.intersectionStatus[selectedId].flowRate = flowRate;
+    }
+    
+    // Show notification
+    showNotification('Traffic light settings updated', 'success');
+}
+
+// Send emergency mode toggle to server
+function toggleEmergencyMode() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.error('Socket not connected');
+        return;
+    }
+    
+    const selectedId = document.getElementById('intersection-select').value;
+    const button = document.getElementById('emergency-mode');
+    const isEmergency = button.classList.contains('bg-blue-700');
+    
+    // Toggle button state
+    if (isEmergency) {
+        button.classList.remove('bg-blue-700', 'hover:bg-blue-600');
+        button.classList.add('bg-red-700', 'hover:bg-red-600');
+        button.textContent = 'Emergency Mode';
+    } else {
+        button.classList.remove('bg-red-700', 'hover:bg-red-600');
+        button.classList.add('bg-blue-700', 'hover:bg-blue-600');
+        button.textContent = 'Normal Mode';
+    }
+    
+    // Send update to server
+    socket.send(JSON.stringify({
+        type: 'emergency_mode',
+        intersectionId: selectedId,
+        enabled: !isEmergency, // Toggle state
+        timestamp: new Date().toISOString()
+    }));
+    
+    // Show notification
+    showNotification(
+        !isEmergency ? 'Emergency mode activated' : 'Emergency mode deactivated',
+        !isEmergency ? 'warning' : 'success'
+    );
+    
+    // Add to log
+    addSystemLog(
+        new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        !isEmergency ? `Emergency mode activated for ${selectedId}` : `Emergency mode deactivated for ${selectedId}`,
+        !isEmergency ? 'warning' : 'success'
+    );
+}
+
+// Update cycle duration and flow rate values
+function handleRangeChange() {
+    const cycleValue = document.getElementById('cycle-duration').value;
+    document.getElementById('cycle-value').textContent = `${cycleValue}s`;
+    
+    const flowValue = document.getElementById('flow-rate').value;
+    const flowText = flowValue <= 3 ? 'Light' : flowValue <= 7 ? 'Medium' : 'Heavy';
+    document.getElementById('flow-value').textContent = flowText;
+    
+    // Auto-send updates
+    sendTrafficLightUpdate();
+}
+
+// UI Initialization
+function initUI() {
+    // Tab switching functionality
+    const tabButtons = document.querySelectorAll('[role="tab"]');
+    const tabPanels = document.querySelectorAll('[role="tabpanel"]');
+    
+    tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            // Deactivate all tabs
+            tabButtons.forEach(btn => {
+                btn.setAttribute('aria-selected', 'false');
+                btn.classList.remove('bg-accent-green', 'text-white');
+                btn.classList.add('text-gray-400');
+            });
+            
+            // Hide all panels
+            tabPanels.forEach(panel => {
+                panel.classList.add('hidden');
+            });
+            
+            // Activate selected tab
+            button.setAttribute('aria-selected', 'true');
+            button.classList.remove('text-gray-400');
+            button.classList.add('bg-accent-green', 'text-white');
+            
+            // Show corresponding panel
+            const panelId = button.getAttribute('aria-controls');
+            document.getElementById(panelId).classList.remove('hidden');
+        });
     });
     
-    // Activate cameras
-    activateCamerasBtn.addEventListener('click', function() {
-        const btnText = this.querySelector('span:last-child');
-        const cameraIcon = this.querySelector('.material-icons');
+    // Handle form submissions
+    setupFormHandlers();
+    
+    // Handle intersection selection change
+    document.getElementById('intersection-select')?.addEventListener('change', () => {
+        updateIntersectionStatus();
         
-        if (btnText.textContent === 'Activate Cameras') {
-            btnText.textContent = 'Deactivate Cameras';
-            cameraIcon.textContent = 'videocam_off';
-            this.classList.remove('bg-accent-dark');
-            this.classList.add('bg-red-700');
-            addLog('Cameras activated and streaming', 'normal');
-        } else {
-            btnText.textContent = 'Activate Cameras';
-            cameraIcon.textContent = 'videocam';
-            this.classList.remove('bg-red-700');
-            this.classList.add('bg-accent-dark');
-            addLog('Camera stream paused', 'warning');
+        // Show notification
+        const selectedText = document.getElementById('intersection-select').options[
+            document.getElementById('intersection-select').selectedIndex
+        ].text;
+        
+        showNotification(`Selected intersection: ${selectedText}`, 'info');
+    });
+    
+    // Handle cycle duration and flow rate changes
+    document.getElementById('cycle-duration')?.addEventListener('change', handleRangeChange);
+    document.getElementById('flow-rate')?.addEventListener('change', handleRangeChange);
+    
+    // Handle emergency mode toggle
+    document.getElementById('emergency-mode')?.addEventListener('click', toggleEmergencyMode);
+    
+    // Handle auto control toggle
+    document.getElementById('auto-control')?.addEventListener('click', () => {
+        // Send to server
+        const selectedId = document.getElementById('intersection-select').value;
+        
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                type: 'auto_control',
+                intersectionId: selectedId,
+                timestamp: new Date().toISOString()
+            }));
+        }
+        
+        showNotification('Auto control mode activated', 'success');
+    });
+    
+    // Handle camera activation
+    document.getElementById('activate-cameras')?.addEventListener('click', () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const selectedId = document.getElementById('intersection-select').value;
+            
+            socket.send(JSON.stringify({
+                type: 'activate_cameras',
+                intersectionId: selectedId,
+                timestamp: new Date().toISOString()
+            }));
+        }
+        
+        showNotification('Cameras activated', 'success');
+        
+        // Add to log
+        addSystemLog(
+            new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            'Cameras activated for traffic monitoring',
+            'success'
+        );
+    });
+    
+    // Handle traffic pattern change
+    document.getElementById('traffic-pattern')?.addEventListener('click', () => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const selectedId = document.getElementById('intersection-select').value;
+            
+            socket.send(JSON.stringify({
+                type: 'change_traffic_pattern',
+                intersectionId: selectedId,
+                timestamp: new Date().toISOString()
+            }));
+        }
+        
+        showNotification('Traffic pattern updated', 'info');
+    });
+    
+    // Handle clear log button
+    document.getElementById('clear-log')?.addEventListener('click', () => {
+        const logContainer = document.getElementById('system-log');
+        if (logContainer) {
+            logContainer.innerHTML = '';
+        }
+        
+        showNotification('System log cleared', 'info');
+    });
+    
+    // Handle detection settings changes
+    document.getElementById('confidence-threshold')?.addEventListener('input', (e) => {
+        const value = e.target.value;
+        document.getElementById('threshold-value').textContent = `${value}%`;
+        
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+                type: 'update_detection_settings',
+                settings: {
+                    confidenceThreshold: value / 100,
+                    showDetections: document.getElementById('show-detections').checked,
+                    enableAnalytics: document.getElementById('enable-analytics').checked,
+                    saveData: document.getElementById('save-data').checked
+                },
+                timestamp: new Date().toISOString()
+            }));
         }
     });
     
-    // Traffic pattern button
-    trafficPatternBtn.addEventListener('click', function() {
-        const patterns = ['Regular', 'Rush Hour', 'Weekend', 'Event'];
-        const randomPattern = patterns[Math.floor(Math.random() * patterns.length)];
-        addLog(`Traffic pattern changed to ${randomPattern} mode`, 'normal');
-        
-        // Update traffic density temporarily
-        document.getElementById('traffic-volume').textContent = (5000 + Math.floor(Math.random() * 2000)).toLocaleString();
-    });
-    
-    // Emergency mode button
-    emergencyModeBtn.addEventListener('click', function() {
-        state.isEmergencyMode = !state.isEmergencyMode;
-        if (state.isEmergencyMode) {
-            this.classList.remove('bg-red-700');
-            this.classList.add('bg-red-600');
-            this.textContent = 'Cancel Emergency';
-            
-            // Force east-west to green
-            setTrafficLightState('east-west', true);
-            
-            // Stop automatic cycle
-            if (state.trafficLightInterval) {
-                clearInterval(state.trafficLightInterval);
-                state.trafficLightInterval = null;
+    // Handle checkbox changes
+    ['show-detections', 'enable-analytics', 'save-data'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', () => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({
+                    type: 'update_detection_settings',
+                    settings: {
+                        confidenceThreshold: document.getElementById('confidence-threshold').value / 100,
+                        showDetections: document.getElementById('show-detections').checked,
+                        enableAnalytics: document.getElementById('enable-analytics').checked,
+                        saveData: document.getElementById('save-data').checked
+                    },
+                    timestamp: new Date().toISOString()
+                }));
             }
             
-            addLog('EMERGENCY MODE ACTIVATED - All traffic cleared for emergency vehicles', 'error');
-        } else {
-            this.classList.remove('bg-red-600');
-            this.classList.add('bg-red-700');
-            this.textContent = 'Emergency Mode';
-            
-            // Restart automatic cycle
-            startTrafficLightCycle();
-            
-            addLog('Emergency mode deactivated - Returning to normal operation', 'normal');
-        }
-    });
-    
-    // Auto control button
-    autoControlBtn.addEventListener('click', function() {
-        state.isAutoControl = !state.isAutoControl;
-        if (state.isAutoControl) {
-            this.classList.remove('bg-blue-600');
-            this.classList.add('bg-blue-700');
-            this.textContent = 'Auto Control';
-            startTrafficLightCycle();
-            addLog('Traffic lights set to automatic control', 'normal');
-        } else {
-            this.classList.remove('bg-blue-700');
-            this.classList.add('bg-blue-600');
-            this.textContent = 'Manual Control';
-            if (state.trafficLightInterval) {
-                clearInterval(state.trafficLightInterval);
-                state.trafficLightInterval = null;
-            }
-            addLog('Traffic lights set to manual control', 'warning');
-        }
-    });
-    
-    // Cycle duration slider
-    cycleDurationInput.addEventListener('input', function() {
-        state.cycleDuration = parseInt(this.value);
-        cycleValueEl.textContent = `${state.cycleDuration}s`;
-        
-        if (state.isAutoControl && !state.isEmergencyMode) {
-            restartTrafficLightCycle();
-        }
-    });
-    
-    // Flow rate slider
-    flowRateInput.addEventListener('input', function() {
-        state.flowRate = parseInt(this.value);
-        const flowText = state.flowRate <= 3 ? 'Light' : state.flowRate <= 7 ? 'Medium' : 'Heavy';
-        flowValueEl.textContent = flowText;
-    });
-    
-    // Confidence threshold slider
-    confidenceThresholdInput.addEventListener('input', function() {
-        state.confidenceThreshold = parseInt(this.value);
-        thresholdValueEl.textContent = `${state.confidenceThreshold}%`;
-    });
-    
-    // Show detections checkbox
-    showDetectionsCheckbox.addEventListener('change', function() {
-        state.showDetections = this.checked;
-    });
-    
-    // Enable analytics checkbox
-    enableAnalyticsCheckbox.addEventListener('change', function() {
-        state.enableAnalytics = this.checked;
-        if (this.checked) {
-            addLog('Traffic analytics processing enabled', 'normal');
-        } else {
-            addLog('Traffic analytics processing disabled', 'warning');
-        }
-    });
-    
-    // Save data checkbox
-    saveDataCheckbox.addEventListener('change', function() {
-        state.saveData = this.checked;
-    });
-    
-    // Clear log button
-    clearLogBtn.addEventListener('click', function() {
-        systemLogEl.innerHTML = '';
-        state.logs = [];
-        addLog('System log cleared', 'normal');
+            showNotification('Detection settings updated', 'info');
+        });
     });
 }
 
-// Add log entry
-function addLog(message, type = 'normal') {
+// Setup form handlers
+function setupFormHandlers() {
+    // Settings form
+    const settingsForm = document.getElementById('settings-form');
+    if (settingsForm) {
+        settingsForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            // Show success message
+            showNotification('Settings saved successfully', 'success');
+            
+            // In a real application, you would send these settings to the backend
+            console.log('Settings form submitted');
+        });
+    }
+    
+    // Add user form
+    const addUserForm = document.getElementById('add-user-form');
+    if (addUserForm) {
+        addUserForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const role = document.getElementById('role').value;
+            
+            // Add user to the table (in a real app, this would be saved to the database)
+            addUserToTable(username, email, role);
+            
+            // Clear form
+            addUserForm.reset();
+            
+            // Show success message
+            showNotification(`User ${username} added successfully`, 'success');
+        });
+    }
+}
+
+// Load dashboard data - updated to work with WebSocket data
+function loadDashboardData() {
+    // Initial request for data is now done via WebSocket in connectToServer()
+    
+    // Initialize charts with empty data until real data arrives
+    updateVehicleCompositionChart();
+    updateHourlyTrafficChart();
+}
+
+// Update time display
+function updateTime() {
     const now = new Date();
     const timeString = now.toLocaleTimeString();
-    
-    const logRow = document.createElement('tr');
-    logRow.classList.add('border-b', 'border-gray-700');
-    
-    const timeCell = document.createElement('td');
-    timeCell.classList.add('p-2', 'text-gray-500', 'w-24');
-    timeCell.textContent = timeString;
-    
-    const messageCell = document.createElement('td');
-    messageCell.classList.add('p-2');
-    
-    switch (type) {
-        case 'success':
-            messageCell.classList.add('text-green-400');
-            break;
-        case 'warning':
-            messageCell.classList.add('text-yellow-400');
-            break;
-        case 'error':
-            messageCell.classList.add('text-red-400');
-            break;
-        default:
-            messageCell.classList.add('text-white');
-            break;
-    }
-    
-    messageCell.textContent = message;
-    
-    logRow.appendChild(timeCell);
-    logRow.appendChild(messageCell);
-    
-    systemLogEl.prepend(logRow);
-    
-    // Keep log to a reasonable size
-    if (systemLogEl.children.length > 100) {
-        systemLogEl.removeChild(systemLogEl.lastChild);
-    }
+    document.getElementById('current-time').textContent = timeString;
 }
 
-// Traffic light control
-function startTrafficLightCycle() {
-    if (state.trafficLightInterval) {
-        clearInterval(state.trafficLightInterval);
-    }
+// Traffic simulation setup
+function setupTrafficSimulation() {
+    // Initialize traffic simulation
+    initTrafficSimulation();
     
-    // Initial state
-    setTrafficLightState('east-west');
-    
-    state.trafficLightInterval = setInterval(() => {
-        if (state.trafficLightState === 'east-west') {
-            // Switch to north-south
-            setTrafficLightState('north-south');
-        } else {
-            // Switch to east-west
-            setTrafficLightState('east-west');
-        }
-    }, state.cycleDuration * 1000);
+    // Traffic light cycle simulation
+    startTrafficLightCycle();
 }
 
-function restartTrafficLightCycle() {
-    if (state.trafficLightInterval) {
-        clearInterval(state.trafficLightInterval);
-        startTrafficLightCycle();
-    }
+// Initialize traffic simulation
+function initTrafficSimulation() {
+    console.log('Traffic simulation initialized');
 }
 
-function setTrafficLightState(direction, isEmergency = false) {
-    state.trafficLightState = direction;
+// Show notification
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <span class="material-icons">${getIconForType(type)}</span>
+        <span>${message}</span>
+    `;
     
-    if (direction === 'east-west') {
-        // East-West is GREEN, North-South is RED
-        eastRed.classList.remove('active');
-        eastYellow.classList.remove('active');
-        eastGreen.classList.add('active');
-        
-        westRed.classList.remove('active');
-        westYellow.classList.remove('active');
-        westGreen.classList.add('active');
-        
-        northRed.classList.add('active');
-        northYellow.classList.remove('active');
-        northGreen.classList.remove('active');
-        
-        southRed.classList.add('active');
-        southYellow.classList.remove('active');
-        southGreen.classList.remove('active');
-        
-        eastWestStatusEl.textContent = 'GREEN';
-        eastWestStatusEl.className = 'text-green-500 font-medium';
-        
-        northSouthStatusEl.textContent = 'RED';
-        northSouthStatusEl.className = 'text-red-500 font-medium';
-        
-        if (!isEmergency) {
-            addLog('Traffic flow: East-West direction GREEN', 'normal');
-        }
+    // Add to notifications container
+    const container = document.getElementById('notifications');
+    if (!container) {
+        // Create container if it doesn't exist
+        const newContainer = document.createElement('div');
+        newContainer.id = 'notifications';
+        newContainer.className = 'fixed top-5 right-5 z-50 flex flex-col space-y-2';
+        document.body.appendChild(newContainer);
+        newContainer.appendChild(notification);
     } else {
-        // North-South is GREEN, East-West is RED
-        eastRed.classList.add('active');
-        eastYellow.classList.remove('active');
-        eastGreen.classList.remove('active');
-        
-        westRed.classList.add('active');
-        westYellow.classList.remove('active');
-        westGreen.classList.remove('active');
-        
-        northRed.classList.remove('active');
-        northYellow.classList.remove('active');
-        northGreen.classList.add('active');
-        
-        southRed.classList.remove('active');
-        southYellow.classList.remove('active');
-        southGreen.classList.add('active');
-        
-        eastWestStatusEl.textContent = 'RED';
-        eastWestStatusEl.className = 'text-red-500 font-medium';
-        
-        northSouthStatusEl.textContent = 'GREEN';
-        northSouthStatusEl.className = 'text-green-500 font-medium';
-        
-        if (!isEmergency) {
-            addLog('Traffic flow: North-South direction GREEN', 'normal');
-        }
+        container.appendChild(notification);
+    }
+    
+    // Remove notification after delay
+    setTimeout(() => {
+        notification.classList.add('fade-out');
+        setTimeout(() => {
+            notification.remove();
+        }, 500);
+    }, 5000);
+}
+
+// Get icon for notification type
+function getIconForType(type) {
+    switch(type) {
+        case 'success': return 'check_circle';
+        case 'error': return 'error';
+        case 'warning': return 'warning';
+        case 'info': 
+        default:
+            return 'info';
     }
 }
 
-// Traffic simulation
-function startTrafficSimulation() {
-    setInterval(() => {
-        if (state.vehicles.length < state.flowRate * 2) {
-            createRandomVehicle();
-        }
-        
-        // Update vehicle positions
-        updateVehicles();
-    }, 1000);
-}
-
-function createRandomVehicle() {
-    // Decide vehicle type
-    const vehicleTypes = ['car', 'car', 'car', 'truck', 'bus'];
-    const vehicleType = vehicleTypes[Math.floor(Math.random() * vehicleTypes.length)];
-    
-    // Decide direction (1: east, 2: west, 3: north, 4: south)
-    const direction = Math.floor(Math.random() * 4) + 1;
-    
-    // Calculate starting position based on direction
-    let x, y, rotation;
-    
-    switch (direction) {
-        case 1: // East
-            x = -50;
-            y = Math.random() * 30 + 180;
-            rotation = 0;
-            break;
-        case 2: // West
-            x = 450;
-            y = Math.random() * 30 + 210;
-            rotation = 180;
-            break;
-        case 3: // North
-            x = Math.random() * 30 + 210;
-            y = -50;
-            rotation = 90;
-            break;
-        case 4: // South
-            x = Math.random() * 30 + 180;
-            y = 450;
-            rotation = 270;
-            break;
+// CSS for admin dashboard
+const style = document.createElement('style');
+style.textContent = `
+    /* Notification styles */
+    #notifications {
+        pointer-events: none;
+    }
+    .notification {
+        background-color: #303134;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        animation: slide-in 0.3s ease-out;
+        pointer-events: auto;
+    }
+    .notification.fade-out {
+        animation: slide-out 0.5s ease-out forwards;
+    }
+    .notification.success {
+        border-left: 4px solid #4caf50;
+    }
+    .notification.success .material-icons {
+        color: #4caf50;
+    }
+    .notification.error {
+        border-left: 4px solid #f44336;
+    }
+    .notification.error .material-icons {
+        color: #f44336;
+    }
+    .notification.warning {
+        border-left: 4px solid #ff9800;
+    }
+    .notification.warning .material-icons {
+        color: #ff9800;
+    }
+    .notification.info {
+        border-left: 4px solid #2196f3;
+    }
+    .notification.info .material-icons {
+        color: #2196f3;
+    }
+    @keyframes slide-in {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slide-out {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
     }
     
-    // Create vehicle object
-    const vehicle = {
-        id: `vehicle-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: vehicleType,
-        direction: direction,
-        x: x,
-        y: y,
-        rotation: rotation,
-        speed: 2 + Math.random() * 2,
-        waiting: false,
-        element: null
-    };
+    /* Traffic light styles */
+    .traffic-light {
+        position: absolute;
+        width: 8px;
+        height: 24px;
+        background-color: #333;
+        border-radius: 2px;
+    }
+    .light {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        position: absolute;
+        left: 1px;
+        opacity: 0.3;
+    }
+    .light.active {
+        opacity: 1;
+        box-shadow: 0 0 5px;
+    }
+    .red-light {
+        background-color: #f44336;
+        top: 2px;
+    }
+    .yellow-light {
+        background-color: #ffeb3b;
+        top: 9px;
+    }
+    .green-light {
+        background-color: #4caf50;
+        top: 16px;
+    }
     
-    // Create DOM element
-    const vehicleEl = document.createElement('div');
-    vehicleEl.classList.add('vehicle', vehicleType);
-    vehicleEl.style.transform = `translate(${x}px, ${y}px) rotate(${rotation}deg)`;
-    
-    // Add to container
-    intersectionContainer.appendChild(vehicleEl);
-    vehicle.element = vehicleEl;
-    
-    // Add to state
-    state.vehicles.push(vehicle);
-}
-
-function updateVehicles() {
-    const centerX = 200;
-    const centerY = 200;
-    const intersectionSize = 80;
-    
-    state.vehicles.forEach((vehicle, index) => {
-        // Check if vehicle is in the waiting zone
-        const isInIntersection = (
-            Math.abs(vehicle.x - centerX) < intersectionSize / 2 &&
-            Math.abs(vehicle.y - centerY) < intersectionSize / 2
-        );
-        
-        // Check if vehicle should wait at red light
-        let shouldWait = false;
-        
-        if (!isInIntersection && !vehicle.waiting) {
-            // East-West direction
-            if ((vehicle.direction === 1 || vehicle.direction === 2) && state.trafficLightState === 'north-south') {
-                // Check if approaching intersection
-                if (vehicle.direction === 1 && vehicle.x > centerX - intersectionSize / 2 - 40 && vehicle.x < centerX - intersectionSize / 2) {
-                    shouldWait = true;
-                } else if (vehicle.direction === 2 && vehicle.x < centerX + intersectionSize / 2 + 40 && vehicle.x > centerX + intersectionSize / 2) {
-                    shouldWait = true;
-                }
-            }
-            
-            // North-South direction
-            if ((vehicle.direction === 3 || vehicle.direction === 4) && state.trafficLightState === 'east-west') {
-                // Check if approaching intersection
-                if (vehicle.direction === 3 && vehicle.y > centerY - intersectionSize / 2 - 40 && vehicle.y < centerY - intersectionSize / 2) {
-                    shouldWait = true;
-                } else if (vehicle.direction === 4 && vehicle.y < centerY + intersectionSize / 2 + 40 && vehicle.y > centerY + intersectionSize / 2) {
-                    shouldWait = true;
-                }
-            }
-        }
-        
-        vehicle.waiting = shouldWait;
-        
-        // Move vehicle if not waiting
-        if (!vehicle.waiting) {
-            switch (vehicle.direction) {
-                case 1: // East
-                    vehicle.x += vehicle.speed;
-                    break;
-                case 2: // West
-                    vehicle.x -= vehicle.speed;
-                    break;
-                case 3: // North
-                    vehicle.y += vehicle.speed;
-                    break;
-                case 4: // South
-                    vehicle.y -= vehicle.speed;
-                    break;
-            }
-            
-            // Update vehicle position
-            vehicle.element.style.transform = `translate(${vehicle.x}px, ${vehicle.y}px) rotate(${vehicle.rotation}deg)`;
-        }
-        
-        // Remove vehicles that went off-screen
-        if (vehicle.x < -100 || vehicle.x > 500 || vehicle.y < -100 || vehicle.y > 500) {
-            if (vehicle.element && vehicle.element.parentNode) {
-                vehicle.element.parentNode.removeChild(vehicle.element);
-            }
-            state.vehicles.splice(index, 1);
-        }
-    });
-}
-
-// Entry point - initialize when page loads
-window.addEventListener('DOMContentLoaded', initDashboard);
+    /* Position traffic lights around intersections */
+    .tl-1-n {
+        top: calc(50% - 50px);
+        left: calc(25% - 12px);
+    }
+    .tl-1-s {
+        top: calc(50% + 26px);
+        left: calc(25% + 4px);
+    }
+    .tl-1-e {
+        top: calc(50% - 12px);
+        left: calc(25% + 26px);
+        transform: rotate(90deg);
+    }
+    .tl-1-w {
+        top: calc(50% + 4px);
+        left: calc(25% - 34px);
+        transform: rotate(90deg);
+    }
+    .tl-2-n {
+        top: calc(50% - 50px);
+        left: calc(75% - 12px);
+    }
+    .tl-2-s {
+        top: calc(50% + 26px);
+        left: calc(75% + 4px);
+    }
+    .tl-2-e {
+        top: calc(50% - 12px);
+        left: calc(75% + 26px);
+        transform: rotate(90deg);
+    }
+    .tl-2-w {
+        top: calc(50% + 4px);
+        left: calc(75% - 34px);
+        transform: rotate(90deg);
+    }
+`;
+document.head.appendChild(style);

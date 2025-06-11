@@ -1,807 +1,129 @@
-/**
- * Smart Road System - UI Module
- * Manages all user interface elements and updates
- */
+// UI helper functions for the Smart Road System
 
-import app from './app-config.js';
-import { camera } from './camera.js';
-import { detection } from './detection.js';
-import { traffic } from './traffic.js';
+// Set up UI event handlers
+export function setupUI() {
+  // Add document-level event delegation for dynamically added elements
+  document.addEventListener('click', (event) => {
+    // Handle "view-details" buttons in map popups
+    if (event.target.classList.contains('view-details')) {
+      const intersectionId = event.target.dataset.id;
+      if (intersectionId) {
+        // Import and call the function from the module where it's defined
+        import('./map.js').then(mapModule => {
+          mapModule.showIntersectionDetails(intersectionId);
+        });
+      }
+    }
+  });
+  
+  // Handle routes button click
+  document.getElementById('show-routes-btn').addEventListener('click', () => {
+    // Show a message about the available route between intersections
+    const routeInfo = document.createElement('div');
+    routeInfo.className = 'absolute top-20 right-4 bg-surface p-3 rounded-md shadow-md z-10 text-sm';
+    routeInfo.innerHTML = `
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="font-medium text-white">Rupa Mall - Bypass Route</h3>
+        <button class="close-info text-gray-400 hover:text-white">&times;</button>
+      </div>
+      <p class="text-gray-300 mb-2">Distance: 0.7 km</p>
+      <p class="text-gray-300 mb-2">Current traffic: Moderate</p>
+      <div class="flex items-center">
+        <span class="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-2"></span>
+        <span>Moderate congestion at Rupa Mall Junction</span>
+      </div>
+    `;
+    
+    document.body.appendChild(routeInfo);
+    
+    // Handle close button
+    routeInfo.querySelector('.close-info').addEventListener('click', () => {
+      routeInfo.remove();
+    });
+    
+    // Remove after 10 seconds
+    setTimeout(() => {
+      if (document.body.contains(routeInfo)) {
+        routeInfo.remove();
+      }
+    }, 10000);
+  });
+}
 
-// UI management
-export const ui = {    /**
-     * Initialize the UI
-     */
-    init() {
-        // Initialize mobile classes
-        if (window.innerWidth < 1024) {
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar) {
-                sidebar.classList.add('sidebar-transition', 'sidebar-hidden');
-            }
-        }
-        
-        this.setupEventListeners();
-        this.updateCamerasSection();
-        this.updateConnectionStatus('disconnected');
-        this.setupClockUpdate();
-        
-        // Add resize handler for responsive design
-        window.addEventListener('resize', this.handleResize.bind(this));
-    },
+// Update intersection details in UI components
+export function updateIntersectionDetails(intersection) {
+    console.log("Updating UI for intersection:", intersection.id);
     
-    /**
-     * Handle window resize events
-     */
-    handleResize() {
-        const sidebar = document.getElementById('sidebar');
-        
-        if (window.innerWidth >= 1024) {
-            // Remove mobile classes on large screens
-            if (sidebar) {
-                sidebar.classList.remove('sidebar-visible', 'sidebar-hidden', 'sidebar-transition');
-            }
-        } else {
-            // Add mobile classes on small screens if not already present
-            if (sidebar && !sidebar.classList.contains('sidebar-transition')) {
-                sidebar.classList.add('sidebar-transition');
-                if (!sidebar.classList.contains('sidebar-visible')) {
-                    sidebar.classList.add('sidebar-hidden');
+    // Update dashboard status based on selected intersection
+    updateDashboardForIntersection(intersection);
+    
+    // Add special notes for certain intersections
+    addSpecialNotes(intersection);
+}
+
+// Update dashboard stats based on selected intersection
+function updateDashboardForIntersection(intersection) {
+    // This would normally use actual data from your system
+    // For now, just use the intersection data we have
+    try {
+        // Simplified example using intersection data
+        document.getElementById('congested-count').textContent = 
+            intersection.status === 'heavy' ? '1' : '0';
+            
+        document.getElementById('moderate-traffic-count').textContent = 
+            intersection.status === 'moderate' ? '1' : '0';
+            
+        document.getElementById('normal-traffic-count').textContent = 
+            intersection.status === 'normal' ? '1' : '0';
+    } catch (error) {
+        console.error("Error updating dashboard:", error);
+    }
+}
+
+// Add special notes for certain intersections
+function addSpecialNotes(intersection) {
+    // Check for Rupa Mall to add special note
+    if (intersection.id === 'intersection-1') { // Rupa Mall Junction
+        try {
+            const detailsSection = document.getElementById('intersection-detail');
+            if (!detailsSection) return;
+            
+            // Check if the note already exists to avoid duplicates
+            if (!document.getElementById('rupa-mall-note')) {
+                const noteDiv = document.createElement('div');
+                noteDiv.id = 'rupa-mall-note';
+                noteDiv.className = 'mt-3 bg-blue-900 bg-opacity-30 p-2 rounded border-l-2 border-blue-500';
+                noteDiv.innerHTML = `
+                    <p class="text-xs text-blue-300">Rupa Mall Area Information</p>
+                    <p class="text-xs text-gray-300">Shopping peak hours: 10:00 - 19:00</p>
+                    <p class="text-xs text-gray-300">Consider using Bypass during peak hours</p>
+                `;
+                
+                const detailsContainer = detailsSection.querySelector('.md\\:w-2\\/3');
+                if (detailsContainer) {
+                    detailsContainer.appendChild(noteDiv);
                 }
             }
+        } catch (error) {
+            console.error("Error adding special notes:", error);
         }
-    },
-      /**
-     * Setup UI-related event listeners
-     */
-    setupEventListeners() {
-        // Connect/disconnect button
-        document.getElementById('camera-toggle').addEventListener('click', function() {
-            if (app.wsConnected) {
-                connection.disconnect();
-            } else {
-                connection.connect();
+    } else {
+        // Remove the note if it exists and we're viewing a different intersection
+        try {
+            const existingNote = document.getElementById('rupa-mall-note');
+            if (existingNote) {
+                existingNote.remove();
             }
-        });
-        
-        // Sidebar toggle for mobile
-        const sidebarToggle = document.getElementById('sidebar-toggle');
-        if (sidebarToggle) {
-            sidebarToggle.addEventListener('click', function() {
-                const sidebar = document.getElementById('sidebar');
-                if (sidebar) {
-                    // Toggle sidebar visibility
-                    if (sidebar.classList.contains('sidebar-visible')) {
-                        sidebar.classList.remove('sidebar-visible');
-                        sidebar.classList.add('sidebar-hidden');
-                    } else {
-                        sidebar.classList.remove('sidebar-hidden');
-                        sidebar.classList.add('sidebar-visible');
-                    }
-                }
-            });
-        }
-        
-        // Close cameras section
-        document.getElementById('close-cameras').addEventListener('click', () => {
-            this.toggleCamerasSection(false);
-        });
-        
-        // Close intersection details
-        document.getElementById('close-detail').addEventListener('click', () => {
-            this.hideIntersectionDetails();
-        });
-        
-        // Handle popup buttons inside map
-        document.addEventListener('click', function(e) {
-            if (e.target.classList.contains('view-details') || 
-                e.target.parentElement.classList.contains('view-details')) {
-                    
-                const button = e.target.classList.contains('view-details') ? 
-                    e.target : e.target.parentElement;
-                    
-                const id = button.getAttribute('data-id');
-                const intersection = app.intersections.find(i => i.id === id);
-                
-                if (intersection) {
-                    app.selectedIntersection = id;
-                    ui.updateIntersectionDetails(intersection);
-                }
-            }
-        });
-    },
-    
-    /**
-     * Setup clock update
-     */
-    setupClockUpdate() {
-        // Update the clock every second
-        setInterval(() => {
-            const now = new Date();
-            document.getElementById('current-time').innerText = now.toLocaleTimeString('en-US', { 
-                hour12: false, 
-                hour: '2-digit', 
-                minute: '2-digit', 
-                second: '2-digit' 
-            });
-        }, 1000);
-        
-        // Initialize with current time
-        document.getElementById('current-time').innerText = new Date().toLocaleTimeString('en-US', { 
-            hour12: false, 
-            hour: '2-digit', 
-            minute: '2-digit', 
-            second: '2-digit' 
-        });
-    },
-    
-    /**
-     * Update the WebSocket connection status in UI
-     */
-    updateConnectionStatus(status) {
-        const statusElement = document.getElementById('system-status');
-        const cameraToggle = document.getElementById('camera-toggle');
-        const indicator = document.querySelector('.traffic-indicator');
-        
-        switch (status) {
-            case 'connected':
-                statusElement.textContent = 'System Online';
-                statusElement.className = 'text-sm text-accent-green';
-                indicator.className = 'traffic-indicator pulse bg-accent-green mr-2';
-                cameraToggle.querySelector('span:not(.material-icons)').textContent = 'Disconnect';
-                break;
-                
-            case 'disconnected':
-                statusElement.textContent = 'System Offline';
-                statusElement.className = 'text-sm text-gray-400';
-                indicator.className = 'traffic-indicator bg-gray-500 mr-2';
-                cameraToggle.querySelector('span:not(.material-icons)').textContent = 'Connect Camera';
-                break;
-                
-            case 'connecting':
-                statusElement.textContent = 'Connecting...';
-                statusElement.className = 'text-sm text-yellow-400';
-                indicator.className = 'traffic-indicator pulse bg-yellow-400 mr-2';
-                cameraToggle.querySelector('span:not(.material-icons)').textContent = 'Connecting...';
-                break;
-                
-            case 'error':
-                statusElement.textContent = 'Connection Error';
-                statusElement.className = 'text-sm text-red-500';
-                indicator.className = 'traffic-indicator bg-red-500 mr-2';
-                cameraToggle.querySelector('span:not(.material-icons)').textContent = 'Retry Connection';
-                break;
-        }
-    },
-    
-    /**
-     * Update the cameras section
-     */
-    updateCamerasSection() {
-        const camerasSection = document.getElementById('cameras-section');
-        
-        if (app.camerasVisible) {
-            camerasSection.classList.remove('hidden');
-        } else {
-            camerasSection.classList.add('hidden');
-        }
-    },
-    
-    /**
-     * Toggle cameras section visibility
-     */
-    toggleCamerasSection(show) {
-        if (show === undefined) {
-            app.camerasVisible = !app.camerasVisible;
-        } else {
-            app.camerasVisible = show;
-        }
-        
-        this.updateCamerasSection();
-    },
-    
-    /**
-     * Update the camera grid with available cameras
-     */
-    updateCameraGrid() {
-        const cameraFeeds = document.getElementById('camera-feeds');
-        if (!cameraFeeds) return;
-        
-        // Clear existing content
-        cameraFeeds.innerHTML = '';
-        
-        // Show message if no cameras
-        if (app.cameras.size === 0) {
-            cameraFeeds.innerHTML = `
-                <div class="col-span-full flex items-center justify-center p-6 text-gray-500">
-                    <span class="material-icons mr-2">videocam_off</span>
-                    No cameras connected
-                </div>
-            `;
-            return;
-        }
-        
-        // Add camera cards
-        app.cameras.forEach((camera, id) => {
-            const card = document.createElement('div');
-            card.className = 'camera-container bg-surface rounded overflow-hidden shadow-md cursor-pointer';
-            card.id = `camera-${id}`;
-            card.dataset.cameraId = id;
-            
-            // Handle click to select camera
-            card.addEventListener('click', () => {
-                this.selectCameraById(id);
-            });
-            
-            // Camera feed image
-            const img = document.createElement('img');
-            img.className = 'camera-feed-image';
-            img.alt = `Camera ${id} feed`;
-            
-            // Set image source if we have a frame
-            if (app.latestFrames.has(id)) {
-                img.src = app.latestFrames.get(id);
-            }
-            
-            // Camera status indicator
-            const statusBar = document.createElement('div');
-            statusBar.className = 'flex justify-between items-center p-2 bg-gray-800';
-            
-            const label = document.createElement('div');
-            label.className = 'text-xs font-medium';
-            label.textContent = `Camera ${id}`;
-            
-            const status = document.createElement('div');
-            status.className = `flex items-center text-xs ${camera.connected ? 'text-green-400' : 'text-red-400'}`;
-            status.innerHTML = `
-                <span class="traffic-indicator ${camera.connected ? 'bg-green-400' : 'bg-red-400'} mr-1"></span>
-                <span>${camera.connected ? 'Online' : 'Offline'}</span>
-            `;
-            
-            statusBar.appendChild(label);
-            statusBar.appendChild(status);
-            
-            // Add to card
-            card.appendChild(img);
-            card.appendChild(statusBar);
-            
-            // Add to grid
-            cameraFeeds.appendChild(card);
-        });
-        
-        // Update camera status message
-        document.getElementById('camera-status').textContent = 
-            `${app.cameras.size} camera${app.cameras.size !== 1 ? 's' : ''} connected`;
-    },
-    
-    /**
-     * Update a specific camera's frame
-     */
-    updateCameraFrame(cameraId, imageUrl) {
-        // Update in grid
-        const cameraCard = document.getElementById(`camera-${cameraId}`);
-        if (cameraCard) {
-            const img = cameraCard.querySelector('img');
-            if (img) {
-                img.src = imageUrl;
-            }
-        }
-        
-        // Update in active view if this is the selected camera
-        if (app.activeCameraId === cameraId) {
-            this.updateActiveCamera(imageUrl);
-        }
-    },
-    
-    /**
-     * Select a camera by ID
-     */
-    selectCameraById(cameraId) {
-        // Update camera selection
-        camera.selectCamera(cameraId);
-        
-        // Update UI
-        this.updateActiveCameraInfo();
-    },
-    
-    /**
-     * Update the active camera information
-     */
-    updateActiveCameraInfo() {
-        if (!app.activeCameraId) return;
-        
-        // Get camera info
-        const cameraInfo = app.cameras.get(app.activeCameraId);
-        if (!cameraInfo) return;
-        
-        // Find intersection that has this camera
-        const intersection = app.intersections.find(i => 
-            i.cameras && i.cameras.includes(app.activeCameraId)
-        );
-        
-        // If found, update intersection details
-        if (intersection) {
-            app.selectedIntersection = intersection.id;
-            this.updateIntersectionDetails(intersection);
-        }
-        
-        // Update active camera display
-        const imageUrl = app.latestFrames.get(app.activeCameraId);
-        if (imageUrl) {
-            this.updateActiveCamera(imageUrl);
-        }
-    },
-      /**
-     * Update the active camera display
-     */
-    updateActiveCamera(imageUrl) {
-        const cameraFeed = document.getElementById('traffic-camera-feed');
-        if (!cameraFeed) return;
-        
-        // Check if there's already an image element
-        let img = cameraFeed.querySelector('img');
-        
-        if (!img) {
-            // Create new image element
-            cameraFeed.innerHTML = '';
-            img = document.createElement('img');
-            img.className = 'w-full h-full object-cover';
-            img.alt = 'Camera Feed';
-            cameraFeed.appendChild(img);
-            
-            // Add FPS counter
-            const fpsCounter = document.createElement('div');
-            fpsCounter.id = 'fps-counter';
-            fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded';
-            fpsCounter.textContent = '0 FPS';
-            cameraFeed.appendChild(fpsCounter);
-        }
-        
-        // Update image source
-        img.src = imageUrl;
-        
-        // Render detection boxes if available
-        const cameraId = app.activeCameraId;
-        if (cameraId && app.showDetections && detection.results.has(cameraId)) {
-            detection.renderDetectionBoxes(cameraId);
-        }
-        
-        // Show live indicator
-        document.getElementById('stream-indicator').classList.remove('hidden');
-        
-        // Start streaming if this is the first frame and we're connected
-        if (app.wsConnected && cameraId && !app.streamingStarted) {
-            app.streamingStarted = true;
-            // Initial frame request to start streaming
-            connection.requestFrame(cameraId);
-        }
-    },
-    
-    /**
-     * Update intersection details panel
-     */
-    updateIntersectionDetails(intersection) {
-        if (!intersection) return;
-        
-        // Show the detail panel
-        const detailPanel = document.getElementById('intersection-detail');
-        detailPanel.classList.remove('hidden');
-        
-        // Update intersection title
-        document.getElementById('detail-title').textContent = intersection.name;
-        
-        // Get traffic status
-        const status = app.trafficStatus.get(intersection.id) || intersection.status || 'unknown';
-        
-        // Get traffic conditions for this route
-        const trafficConditions = traffic.trafficConditions[intersection.id] || {
-            congestion: 'low',
-            accidents: false,
-            speed: 'normal'
-        };
-        
-        // Update traffic density display
-        const densityElem = document.getElementById('detail-density');
-        let displayStatus = 'Unknown';
-        let statusColor = 'text-gray-400';
-        
-        switch (status) {
-            case 'green':
-            case 'low':
-                displayStatus = 'Low';
-                statusColor = 'text-green-500';
-                break;
-            case 'yellow':
-            case 'moderate':
-                displayStatus = 'Moderate';
-                statusColor = 'text-yellow-400';
-                break;
-            case 'red':
-            case 'high':
-                displayStatus = 'High';
-                statusColor = 'text-red-400';
-                break;
-        }
-        
-        densityElem.textContent = displayStatus;
-        densityElem.className = `text-xl font-light ${statusColor}`;
-        
-        // Update vehicle count (if available from detection)
-        let vehicleCount = 0;
-        
-        // If intersection has cameras, check for detection results
-        if (intersection.cameras && intersection.cameras.length > 0) {
-            for (const camId of intersection.cameras) {
-                if (detection.results.has(camId)) {
-                    const results = detection.results.get(camId);
-                    
-                    // Count vehicles in detection results
-                    if (results.detections) {
-                        vehicleCount = results.detections.filter(d => 
-                            ['car', 'truck', 'bus', 'motorcycle'].includes(d.class_name.toLowerCase())
-                        ).length;
-                    }
-                }
-            }
-        }
-        
-        document.getElementById('detail-vehicles').textContent = vehicleCount;
-        
-        // Update camera feed for this intersection
-        if (intersection.cameras && intersection.cameras.length > 0) {
-            // Use the first camera for this intersection
-            const cameraId = intersection.cameras[0];
-            
-            // Select this camera as active
-            camera.selectCamera(cameraId);
-        } else {
-            // No camera available
-            document.getElementById('traffic-camera-feed').innerHTML = `
-                <div class="flex flex-col items-center justify-center h-full">
-                    <span class="material-icons text-4xl text-gray-600">videocam_off</span>
-                    <span class="text-sm text-gray-500 mt-2">No camera available</span>
-                </div>
-            `;
-        }
-        
-        // Update traffic condition indicators
-        this.updateTrafficConditionIndicators(intersection.id, trafficConditions);
-        
-        // Update alternative routes
-        this.updateAlternativeRoutes(intersection, status);
-    },
-    
-    /**
-     * Update traffic condition indicators
-     */
-    updateTrafficConditionIndicators(routeId, conditions) {
-        // Create traffic condition indicators if they don't exist
-        const container = document.querySelector('.grid.grid-cols-2.gap-3.mb-3');
-        if (!container) return;
-        
-        // Add a third row for additional traffic parameters
-        if (!document.getElementById('traffic-conditions-row')) {
-            const trafficConditionsRow = document.createElement('div');
-            trafficConditionsRow.id = 'traffic-conditions-row';
-            trafficConditionsRow.className = 'bg-surface p-3 rounded-md shadow-md col-span-2';
-            
-            trafficConditionsRow.innerHTML = `
-                <h4 class="text-gray-400 text-xs mb-2">Traffic Conditions</h4>
-                <div class="grid grid-cols-3 gap-2">
-                    <div>
-                        <div class="flex items-center">
-                            <span class="material-icons text-sm mr-1 text-yellow-500">speed</span>
-                            <span class="text-xs text-gray-300">Speed</span>
-                        </div>
-                        <p id="traffic-speed" class="text-sm font-medium">Normal</p>
-                    </div>
-                    <div>
-                        <div class="flex items-center">
-                            <span class="material-icons text-sm mr-1 text-red-500">warning</span>
-                            <span class="text-xs text-gray-300">Accidents</span>
-                        </div>
-                        <p id="traffic-accidents" class="text-sm font-medium">None</p>
-                    </div>
-                    <div>
-                        <div class="flex items-center">
-                            <span class="material-icons text-sm mr-1 text-blue-500">route</span>
-                            <span class="text-xs text-gray-300">Route ID</span>
-                        </div>
-                        <p id="route-camera" class="text-sm font-medium">${routeId}</p>
-                    </div>
-                </div>
-            `;
-            
-            // Insert after the first row
-            container.parentNode.insertBefore(trafficConditionsRow, container.nextSibling);
-        }
-        
-        // Update condition values
-        const speedElement = document.getElementById('traffic-speed');
-        const accidentsElement = document.getElementById('traffic-accidents');
-        const routeElement = document.getElementById('route-camera');
-        
-        if (speedElement && accidentsElement && routeElement) {
-            // Update speed
-            let speedText, speedClass;
-            switch (conditions.speed) {
-                case 'slow':
-                    speedText = 'Slow';
-                    speedClass = 'text-red-400';
-                    break;
-                case 'moderate':
-                    speedText = 'Moderate';
-                    speedClass = 'text-yellow-400';
-                    break;
-                default:
-                    speedText = 'Normal';
-                    speedClass = 'text-green-400';
-            }
-            speedElement.textContent = speedText;
-            speedElement.className = `text-sm font-medium ${speedClass}`;
-            
-            // Update accidents
-            if (conditions.accidents) {
-                accidentsElement.textContent = 'Detected';
-                accidentsElement.className = 'text-sm font-medium text-red-500';
-            } else {
-                accidentsElement.textContent = 'None';
-                accidentsElement.className = 'text-sm font-medium text-gray-300';
-            }
-            
-            // Update route info
-            routeElement.textContent = routeId;
-            
-            // Find which camera is on this route
-            const route = app.intersections.find(r => r.id === routeId);
-            if (route && route.cameras && route.cameras.length > 0) {
-                const cameraId = route.cameras[0];
-                routeElement.textContent = `${routeId} (Camera ${cameraId})`;
-            }
-        }
-    },
-    
-    /**
-     * Update alternative routes display
-     */
-    updateAlternativeRoutes(intersection, status) {
-        const routesContainer = document.getElementById('detail-routes');
-        if (!routesContainer) return;
-        
-        // Default message for no routes needed
-        if (status === 'green' || status === 'low') {
-            routesContainer.innerHTML = `
-                <p class="text-sm text-gray-500">No alternative routes needed</p>
-            `;
-            return;
-        }
-        
-        // Get the other route to recommend
-        const otherRouteId = intersection.id === 'route-1' ? 'route-2' : 'route-1';
-        const otherRoute = app.intersections.find(r => r.id === otherRouteId);
-        
-        if (!otherRoute) {
-            routesContainer.innerHTML = `
-                <p class="text-sm text-gray-500">No alternative routes available</p>
-            `;
-            return;
-        }
-        
-        // Get status of the other route
-        const otherStatus = app.trafficStatus.get(otherRouteId) || 'green';
-        
-        // Only recommend if the other route is in better condition
-        const statusRank = {
-            'green': 0,
-            'low': 0,
-            'yellow': 1,
-            'moderate': 1,
-            'red': 2,
-            'high': 2
-        };
-        
-        if (statusRank[otherStatus] < statusRank[status]) {
-            routesContainer.innerHTML = `
-                <div class="flex items-start space-x-2">
-                    <span class="material-icons text-accent-green mt-0.5">recommend</span>
-                    <div>
-                        <p class="text-sm font-medium text-white">${otherRoute.name}</p>
-                        <p class="text-xs text-gray-400 mt-1">${otherRoute.description || 'Alternative route with better traffic conditions'}</p>
-                        <button class="bg-accent-green text-white px-3 py-1 mt-2 text-xs rounded-full show-on-map" 
-                                data-route="${otherRouteId}">Show on Map</button>
-                    </div>
-                </div>
-            `;
-            
-            // Add event listener to "Show on Map" button
-            routesContainer.querySelector('.show-on-map').addEventListener('click', (e) => {
-                const routeId = e.target.dataset.route;
-                map.highlightRoute(routeId);
-            });
-        } else {
-            routesContainer.innerHTML = `
-                <p class="text-sm text-gray-500">All alternate routes are similarly congested</p>
-            `;
-        }
-    },
-    
-    /**
-     * Hide intersection details panel
-     */
-    hideIntersectionDetails() {
-        document.getElementById('intersection-detail').classList.add('hidden');
-        app.selectedIntersection = null;
-    },
-    
-    /**
-     * Update FPS counter
-     */
-    updateFps(fps) {
-        const fpsCounter = document.getElementById('fps-counter');
-        if (fpsCounter) {
-            fpsCounter.textContent = `${fps} FPS`;
-            
-            // Color code based on performance
-            if (fps >= 20) {
-                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-green-400 text-xs px-2 py-1 rounded';
-            } else if (fps >= 10) {
-                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-yellow-400 text-xs px-2 py-1 rounded';
-            } else {
-                fpsCounter.className = 'absolute top-2 left-2 bg-black bg-opacity-50 text-red-400 text-xs px-2 py-1 rounded';
-            }
-        }
-    },
-    
-    /**
-     * Update camera status indicator
-     */
-    updateCameraStatus(cameraId) {
-        const cameraCard = document.getElementById(`camera-${cameraId}`);
-        if (!cameraCard) return;
-        
-        const camera = app.cameras.get(cameraId);
-        if (!camera) return;
-        
-        const statusElem = cameraCard.querySelector('.text-xs:last-child');
-        
-        if (statusElem) {
-            statusElem.className = `flex items-center text-xs ${camera.connected ? 'text-green-400' : 'text-red-400'}`;
-            statusElem.innerHTML = `
-                <span class="traffic-indicator ${camera.connected ? 'bg-green-400' : 'bg-red-400'} mr-1"></span>
-                <span>${camera.connected ? 'Online' : 'Offline'}</span>
-            `;
-        }
-    },
-    
-    /**
-     * Update alerts display
-     */
-    updateAlerts() {
-        const alertsContainer = document.getElementById('alerts-container');
-        if (!alertsContainer) return;
-        
-        // Clear existing alerts
-        alertsContainer.innerHTML = '';
-        
-        if (app.alerts.length === 0) {
-            alertsContainer.innerHTML = `
-                <div class="flex items-center justify-center py-4 text-gray-500 text-sm">
-                    No alerts at this time
-                </div>
-            `;
-            return;
-        }
-        
-        // Add alerts
-        app.alerts.forEach(alert => {
-            const alertElem = document.createElement('div');
-            alertElem.className = 'bg-card rounded-md p-3 shadow-md border-l-4';
-            
-            // Add appropriate border color based on alert type
-            if (alert.type === 'accident') {
-                alertElem.classList.add('border-red-600');
-            } else if (alert.type === 'traffic-high') {
-                alertElem.classList.add('border-red-500');
-            } else if (alert.type === 'traffic-moderate') {
-                alertElem.classList.add('border-yellow-500');
-            } else if (alert.type === 'reroute') {
-                alertElem.classList.add('border-blue-500');
-            } else {
-                alertElem.classList.add('border-gray-500');
-            }
-            
-            // Format time
-            const timeFormatted = alert.timestamp.toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false
-            });
-            
-            // Create alert content
-            alertElem.innerHTML = `
-                <div class="flex justify-between items-start">
-                    <h4 class="text-sm font-medium text-white">${alert.title}</h4>
-                    <span class="text-xs text-gray-400">${timeFormatted}</span>
-                </div>
-                <p class="text-xs text-gray-300 mt-1">${alert.message}</p>
-            `;
-            
-            alertsContainer.appendChild(alertElem);
-        });
-    },
-    
-    /**
-     * Show notification to the user
-     */
-    showNotification(message, type = 'info') {
-        // Create toast notification
-        const toast = document.createElement('div');
-        toast.className = 'fixed bottom-4 right-4 px-4 py-2 rounded-md shadow-lg text-white z-50 transition-opacity duration-300';
-        
-        // Set style based on notification type
-        switch(type) {
-            case 'success':
-                toast.className += ' bg-green-500';
-                break;
-            case 'warning':
-                toast.className += ' bg-yellow-500';
-                break;
-            case 'error':
-                toast.className += ' bg-red-500';
-                break;
-            default:
-                toast.className += ' bg-blue-500';
-        }
-        
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        
-        // Fade out and remove after delay
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => {
-                document.body.removeChild(toast);
-            }, 300);
-        }, 3000);
-    },
-    
-    /**
-     * Update camera count in UI
-     */
-    updateCameraCount(count) {
-        const camerasCount = document.getElementById('cameras-count');
-        if (camerasCount) {
-            camerasCount.textContent = count;
-        }
-    },
-    
-    /**
-     * Update intersections count in UI
-     */
-    updateIntersectionsCount(count) {
-        const intersectionsCount = document.getElementById('intersections-count');
-        if (intersectionsCount) {
-            intersectionsCount.textContent = count;
-        }
-    },
-    
-    /**
-     * Update congested count in UI
-     */
-    updateCongestedCount(count) {
-        const congestedCount = document.getElementById('congested-count');
-        if (congestedCount) {
-            congestedCount.textContent = count;
-        }
-    },
-    
-    /**
-     * Update alerts count in UI
-     */
-    updateAlertsCount(count) {
-        const alertsCount = document.getElementById('alerts-count');
-        if (alertsCount) {
-            alertsCount.textContent = count;
+        } catch (error) {
+            console.error("Error removing special notes:", error);
         }
     }
-};
+}
+
+// Update traffic counts based on current data
+function updateTrafficCounts() {
+  // This would be implemented based on your data tracking
+  // The map.js module already handles this in our implementation
+}
+
+// Export other UI-related functions as needed
