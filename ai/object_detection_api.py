@@ -28,7 +28,7 @@ from ultralytics import YOLO
 class DetectionRequest(BaseModel):
     """Request model for object detection endpoint."""
     image: str  # Base64 encoded JPEG image
-    confidence: Optional[float] = 0.25  # Default confidence threshold
+    confidence: Optional[float] = 0.01  # Default confidence threshold (lowered for poor frames)
     max_det: Optional[int] = 100  # Maximum detections per image
     
 class DetectionResult(BaseModel):
@@ -55,7 +55,7 @@ logger = logging.getLogger("traffic-ai")
 # Model will be loaded on first request (lazy loading)
 model = None
 model_path = "custom.pt"  # Use custom model
-class_names = []  # Will be populated from model
+class_names = ["car", "accident"]  # Will be populated from model
 traffic_classes = ['car', 'accident']  # Only track car and accident
 
 # WebSocket connection to Node.js server
@@ -90,15 +90,15 @@ def decode_base64_image(image_string: str):
         logger.error(f"Exception in decode_base64_image: {e}")
         return None
 
-async def process_image(image_data, confidence_threshold=0.05, camera_id=None):
-    """Process an image and return traffic detection results and annotated frame."""
+async def process_image(image_data, confidence_threshold=0.01, camera_id=None):  
     import cv2
     import numpy as np
     import time
     from base64 import b64decode, b64encode
     start_time = time.time()
     model = get_model()
-    logger.info(f"Processing image for camera_id={camera_id} with confidence_threshold={confidence_threshold}")
+    # Perform detection with specified confidence
+    
     # Decode base64 image
     try:
         img_bytes = b64decode(image_data)
@@ -112,7 +112,11 @@ async def process_image(image_data, confidence_threshold=0.05, camera_id=None):
         raise ValueError("Invalid image data")
     # Run detection
     try:
-        results = model(frame, conf=confidence_threshold, classes=[class_names.index(cls) for cls in traffic_classes if cls in class_names], verbose=False)
+        class_indices = [class_names.index(cls) for cls in traffic_classes if cls in class_names]
+        if class_indices:
+            results = model(frame, conf=confidence_threshold, classes=class_indices, verbose=False)
+        else:
+            results = model(frame, conf=confidence_threshold, verbose=False)
     except Exception as e:
         logger.error(f"Error running YOLO model: {e}")
         raise
@@ -138,7 +142,12 @@ async def process_image(image_data, confidence_threshold=0.05, camera_id=None):
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
             label = f"{class_name}: {conf:.2f}"
             cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            logger.info(f"Detected {class_name} (conf={conf:.2f}) at [{x1},{y1},{x2},{y2}] for camera_id={camera_id}")
+
+    # Log summary counts
+    from collections import Counter
+    counts = Counter([det['class_name'] for det in detections])
+    logger.info(f"Detection counts: {dict(counts)}")
+
     # Encode annotated frame back to base64
     try:
         _, buffer = cv2.imencode('.jpg', frame)
@@ -147,7 +156,7 @@ async def process_image(image_data, confidence_threshold=0.05, camera_id=None):
         logger.error(f"Error encoding annotated image: {e}")
         annotated_image = None
     end_time = time.time()
-    logger.info(f"Detection complete. {len(detections)} objects found. Inference time: {end_time - start_time:.3f}s")
+
     return {
         "detections": detections,
         "inference_time": end_time - start_time,

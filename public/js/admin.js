@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const cameraFeed = document.getElementById('camera-feed');
+    const canvas = document.getElementById('camera-canvas');
+    const ctx = canvas.getContext('2d');
+    let lastDetections = [];
     const detectionStats = document.getElementById('detection-stats');
     const ws = new WebSocket('ws://localhost:3000?type=browser'); // Connect to Node.js server with browser type identifier
 
@@ -15,14 +17,31 @@ document.addEventListener('DOMContentLoaded', () => {
         if (event.data instanceof Blob) {
             // Process binary frame only if we have metadata for it
             if (currentFrameMetadata) {
-                // Create a more direct URL for the image
+                // Render frame to canvas and overlay boxes
                 const blobUrl = URL.createObjectURL(event.data);
-                cameraFeed.src = blobUrl;
-                
-                // Clean up the URL after the image loads to prevent memory leaks
-                cameraFeed.onload = () => {
+                const img = new Image();
+                img.onload = () => {
+                    // Resize canvas to match frame
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    // Draw frame
+                    ctx.drawImage(img, 0, 0);
+                    // Draw bounding boxes
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = 'red';
+                    ctx.font = '16px sans-serif';
+                    ctx.fillStyle = 'red';
+                    lastDetections.forEach(det => {
+                        const [x1, y1, x2, y2] = det.bbox;
+                        const w = x2 - x1;
+                        const h = y2 - y1;
+                        ctx.strokeRect(x1, y1, w, h);
+                        ctx.fillText(det.class || det.class_name, x1, y1 - 5);
+                    });
+                    // Clean up
                     URL.revokeObjectURL(blobUrl);
                 };
+                img.src = blobUrl;
             }
             return;
         }
@@ -39,8 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Process detection results when received
             if (data.type === 'detection_results' && data.detections) {
+                // Store latest detections and update stats
+                lastDetections = data.detections;
                 updateDetectionStats(data.detections);
-                // Bounding box overlay would be handled here
             }
         } catch (error) {
             console.log('Error processing message:', error);
