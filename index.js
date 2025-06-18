@@ -31,8 +31,8 @@ const objectDetection = {
   enabled: true,
   apiEndpoint: 'ws://localhost:8000/ws', // Using WebSocket for better performance
   httpApiEndpoint: 'http://localhost:8000/detect', // HTTP endpoint as backup
-  confidenceThreshold: 0.25,
-  detectionInterval: 100, // ms between detections (limit to ~10 fps for API)
+  confidenceThreshold: 0.05, // Set to 0.05 as requested
+  detectionInterval: 100, // ms between detections (limit to 60 fps for API)
   lastDetectionTime: new Map(), // Track last detection time per camera
   detectionResults: new Map(), // Store latest detection results per camera
   processingCount: 0, // Track currently processing detections
@@ -432,12 +432,14 @@ function sendFrameToAI(frame, cameraId) {
     // AI WebSocket not connected
     return;
   }
-  
+  if (!cameraId) {
+    console.warn('sendFrameToAI: cameraId is missing or unknown!');
+  }
   try {
     // Create detection request with metadata
     const metadata = {
       type: 'detection_request_metadata',
-      camera_id: cameraId,
+      camera_id: cameraId || 'unknown',
       confidence: objectDetection.confidenceThreshold,
       timestamp: Date.now()
     };
@@ -514,6 +516,40 @@ function broadcastDetectionResults(cameraId, results) {
   }
 }
 
+// --- WebSocket Keepalive and Robustness Enhancements ---
+// Track all active sockets for keepalive
+const allSockets = new Set();
+
+function setupWebSocketKeepAlive(ws, label = 'client') {
+  ws.isAlive = true;
+  allSockets.add(ws);
+
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
+  ws.on('close', () => {
+    allSockets.delete(ws);
+  });
+
+  ws.on('error', () => {
+    allSockets.delete(ws);
+  });
+}
+
+// Global interval to terminate dead sockets
+setInterval(() => {
+  for (const ws of allSockets) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      allSockets.delete(ws);
+    } else {
+      ws.isAlive = false;
+      try { ws.ping(); } catch {}
+    }
+  }
+}, 30000);
+
 // Helper function to check if data is binary
 function isBinaryData(data) {
   // Check if it's a Buffer
@@ -580,7 +616,6 @@ wss.on('connection', (ws, req) => {
         if (isJpegData(data)) {
           // If we know the camera ID, process the frame
           if (cameraId) {
-            console.log(`Received JPEG frame from ${cameraId}: ${data.length} bytes`);
             processVideoFrame(data, cameraId);
           } else {
             console.warn("Received JPEG frame but camera ID is not yet known");
@@ -717,6 +752,9 @@ wss.on('connection', (ws, req) => {
       }
     });
   }
+  
+  // Setup keepalive for this WebSocket connection
+  setupWebSocketKeepAlive(ws);
   
   // Handle WebSocket errors and closure
   ws.on('error', (error) => {

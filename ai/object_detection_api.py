@@ -11,6 +11,7 @@ import os
 import time
 from typing import Dict, List, Optional
 from contextlib import asynccontextmanager
+import logging
 
 import cv2
 import numpy as np
@@ -47,11 +48,15 @@ class DetectionResponse(BaseModel):
 
 # --- Global variables ---
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger("traffic-ai")
+
 # Model will be loaded on first request (lazy loading)
 model = None
-model_path = "yolov8n.pt"  # Default model
+model_path = "custom.pt"  # Use custom model
 class_names = []  # Will be populated from model
-traffic_classes = ['car', 'truck', 'bus', 'motorcycle', 'bicycle', 'person']  # Traffic-related classes
+traffic_classes = ['car', 'accident']  # Only track car and accident
 
 # WebSocket connection to Node.js server
 ws_connection = None
@@ -63,82 +68,118 @@ def get_model():
     """Lazy load the model only when needed."""
     global model, class_names
     if model is None:
-        try:
-            print(f"Loading YOLOv8 model from {model_path}...")
-            model = YOLO(model_path)
-            # Get class names from model
-            class_names = model.names
-            print(f"Model loaded successfully with {len(class_names)} classes")
-            print(f"Tracking traffic classes: {[c for c in traffic_classes if c in class_names.values()]}")
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            raise HTTPException(status_code=500, detail=f"Model loading error: {str(e)}")
+        logger.info(f"Loading YOLO model from {model_path}")
+        model = YOLO(model_path)
+        class_names = model.names if hasattr(model, 'names') else []
+        logger.info(f"Model loaded. Classes: {class_names}")
     return model
 
 def decode_base64_image(image_string: str):
     """Decode base64 image to OpenCV format."""
     try:
-        # Check if the string starts with data URI scheme and remove it if present
-        if image_string.startswith('data:image'):
-            image_string = image_string.split(',')[1]
-        
-        # Decode base64 string
-        image_data = base64.b64decode(image_string)
-        
-        # Convert to numpy array
-        nparr = np.frombuffer(image_data, np.uint8)
-        
-        # Decode image
-        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if image is None:
-            raise ValueError("Could not decode image")
-            
-        return image
+        from base64 import b64decode
+        import cv2
+        import numpy as np
+        img_bytes = b64decode(image_string)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            logger.error("Failed to decode image from base64 string.")
+        return frame
     except Exception as e:
-        print(f"Error decoding image: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid image data: {str(e)}")
+        logger.error(f"Exception in decode_base64_image: {e}")
+        return None
 
-async def connect_to_node():
-    """Establish WebSocket connection to Node.js server"""
-    global ws_connection
+async def process_image(image_data, confidence_threshold=0.05, camera_id=None):
+    """Process an image and return traffic detection results and annotated frame."""
+    import cv2
+    import numpy as np
+    import time
+    from base64 import b64decode, b64encode
+    start_time = time.time()
+    model = get_model()
+    logger.info(f"Processing image for camera_id={camera_id} with confidence_threshold={confidence_threshold}")
+    # Decode base64 image
     try:
-        print(f"Connecting to Node.js server at {node_server_url}...")
-        ws_connection = await websockets.connect(node_server_url)
-        print("Connected to Node.js server successfully")
-        
-        # Send initial handshake message
-        await ws_connection.send(json.dumps({
-            "type": "ai_connected",
-            "message": "Traffic detection AI service connected"
-        }))
-        
-        return True
+        img_bytes = b64decode(image_data)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     except Exception as e:
-        print(f"Failed to connect to Node.js server: {e}")
-        ws_connection = None
-        return False
+        logger.error(f"Error decoding image: {e}")
+        raise
+    if frame is None:
+        logger.error("Decoded frame is None. Invalid image data.")
+        raise ValueError("Invalid image data")
+    # Run detection
+    try:
+        results = model(frame, conf=confidence_threshold, classes=[class_names.index(cls) for cls in traffic_classes if cls in class_names], verbose=False)
+    except Exception as e:
+        logger.error(f"Error running YOLO model: {e}")
+        raise
+    detections = []
+    for r in results:
+        for box in r.boxes:
+            class_id = int(box.cls[0])
+            class_name = class_names[class_id] if class_id < len(class_names) else str(class_id)
+            if class_name not in traffic_classes:
+                continue
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(float, box.xyxy[0])
+            h, w = frame.shape[:2]
+            bbox = [x1 / w, y1 / h, x2 / w, y2 / h]
+            detections.append({
+                "class_id": class_id,
+                "class_name": class_name,
+                "confidence": conf,
+                "bbox": bbox
+            })
+            # Draw bounding box
+            color = (0, 255, 0) if class_name == 'car' else (0, 0, 255)
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            label = f"{class_name}: {conf:.2f}"
+            cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            logger.info(f"Detected {class_name} (conf={conf:.2f}) at [{x1},{y1},{x2},{y2}] for camera_id={camera_id}")
+    # Encode annotated frame back to base64
+    try:
+        _, buffer = cv2.imencode('.jpg', frame)
+        annotated_image = b64encode(buffer).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error encoding annotated image: {e}")
+        annotated_image = None
+    end_time = time.time()
+    logger.info(f"Detection complete. {len(detections)} objects found. Inference time: {end_time - start_time:.3f}s")
+    return {
+        "detections": detections,
+        "inference_time": end_time - start_time,
+        "total_time": end_time - start_time,
+        "timestamp": end_time,
+        "image_size": [frame.shape[0], frame.shape[1]],
+        "annotated_image": annotated_image
+    }
 
 async def send_to_node(data):
     """Send data to Node.js server via WebSocket"""
     global ws_connection
-    
+    import json
     if not ws_connection:
-        success = await connect_to_node()
-        if not success:
-            print("Could not send data - no connection to Node.js")
-            return False
-    
+        logger.warning("No WebSocket connection to Node.js server. Cannot send data.")
+        return
     try:
-        if isinstance(data, dict):
-            await ws_connection.send(json.dumps(data))
-        else:
-            await ws_connection.send(data)
-        return True
+        await ws_connection.send(json.dumps(data))
+        logger.info(f"Sent data to Node.js: {data.get('type', 'unknown')}")
     except Exception as e:
-        print(f"Error sending data to Node.js: {e}")
-        ws_connection = None  # Reset connection on error
-        return False
+        logger.error(f"Error sending data to Node.js: {e}")
+
+async def connect_to_node():
+    """Establish WebSocket connection to Node.js server"""
+    global ws_connection
+    import websockets
+    logger.info(f"Connecting to Node.js server at {node_server_url}...")
+    try:
+        ws_connection = await websockets.connect(node_server_url)
+        logger.info("Connected to Node.js server successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to Node.js server: {e}")
 
 async def listen_to_node():
     """Background task to listen for messages from Node.js server"""
@@ -152,7 +193,7 @@ async def listen_to_node():
                     await asyncio.sleep(5)  # Wait before retry
                     continue
             except Exception as e:
-                print(f"Connection error: {e}")
+                logger.error(f"Connection error: {e}")
                 await asyncio.sleep(5)
                 continue
         
@@ -161,11 +202,11 @@ async def listen_to_node():
             # Process message from Node.js
             await process_node_message(message)
         except websockets.exceptions.ConnectionClosed:
-            print("WebSocket connection to Node.js closed")
+            logger.warning("WebSocket connection to Node.js closed")
             ws_connection = None
             await asyncio.sleep(5)  # Wait before retry
         except Exception as e:
-            print(f"Error in WebSocket communication: {e}")
+            logger.error(f"Error in WebSocket communication: {e}")
             ws_connection = None
             await asyncio.sleep(5)  # Wait before retry
 
@@ -193,7 +234,7 @@ async def process_node_message(message):
         
         # Check message type
         if data.get("type") == "detection_request":
-            print("Received detection request from Node.js")
+            logger.info("Received detection request from Node.js")
             if "image" in data:
                 # Process image for detection
                 result = await process_image(data["image"], 
@@ -210,91 +251,9 @@ async def process_node_message(message):
             await send_to_node({"type": "pong", "timestamp": time.time()})
     except json.JSONDecodeError:
         # For non-JSON text data
-        print(f"Received non-JSON text message from Node.js: {message[:50]}...")
+        logger.warning(f"Received non-JSON text message from Node.js: {message[:50]}...")
     except Exception as e:
-        print(f"Error processing message from Node.js: {e}")
-
-async def process_image(image_data, confidence_threshold=0.25, camera_id=None):
-    """Process an image and return traffic detection results"""
-    try:
-        # Decode image
-        image = decode_base64_image(image_data)
-        
-        # Get image dimensions
-        height, width = image.shape[:2]
-        
-        # Ensure model is loaded
-        model = get_model()
-        
-        # Run inference
-        inference_start = time.time()
-        results = model.predict(
-            source=image,
-            conf=confidence_threshold,
-            max_det=100,
-            verbose=False
-        )[0]  # Get first result
-        inference_time = time.time() - inference_start
-        
-        # Process results - focus on traffic classes
-        detections = []
-        traffic_count = {cls: 0 for cls in traffic_classes}
-        
-        if hasattr(results, 'boxes'):
-            for box in results.boxes:
-                # Get class ID and confidence
-                class_id = int(box.cls[0].item())
-                conf = float(box.conf[0].item())
-                class_name = class_names[class_id]
-                
-                # Only include traffic-related classes
-                if class_name.lower() in traffic_classes:
-                    # Get box coordinates and normalize
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    x1, x2 = x1 / width, x2 / width
-                    y1, y2 = y1 / height, y2 / height
-                    
-                    traffic_count[class_name.lower()] = traffic_count.get(class_name.lower(), 0) + 1
-                    
-                    detections.append({
-                        "class_id": class_id,
-                        "class_name": class_name,
-                        "confidence": conf,
-                        "bbox": [x1, y1, x2, y2]
-                    })
-        
-        # Calculate traffic density based on vehicle count
-        vehicle_count = sum(traffic_count.get(cls, 0) for cls in ['car', 'truck', 'bus'])
-        traffic_density = "low"
-        if vehicle_count >= 10:
-            traffic_density = "high"
-        elif vehicle_count >= 5:
-            traffic_density = "moderate"
-        
-        # Prepare response with traffic analysis
-        response = {
-            "detections": detections,
-            "inference_time": inference_time,
-            "total_time": time.time() - inference_start,
-            "timestamp": time.time(),
-            "image_size": [height, width],
-            "traffic_analysis": {
-                "density": traffic_density,
-                "vehicle_count": vehicle_count,
-                "counts_by_type": traffic_count,
-                "camera_id": camera_id
-            }
-        }
-        
-        return response
-        
-    except Exception as e:
-        print(f"Error processing image: {e}")
-        return {
-            "error": str(e),
-            "detections": [],
-            "timestamp": time.time()
-        }
+        logger.error(f"Error processing message from Node.js: {e}")
 
 # --- Lifespan context manager for startup/shutdown events ---
 @asynccontextmanager
@@ -368,82 +327,76 @@ async def detect_objects(request: DetectionRequest):
         )
     
     except Exception as e:
-        print(f"Error during detection: {e}")
+        logger.error(f"Error during detection: {e}")
         raise HTTPException(status_code=500, detail=f"Detection error: {str(e)}")
 
-@app.get("/health")
-def health_check():
-    """Health check endpoint to verify API status."""
-    global model, ws_connection
-    
-    # Check if model is loaded
-    model_loaded = model is not None
-    
-    # Check if we have class names
-    classes_loaded = len(class_names) > 0
-    
-    # Check WebSocket connection status
-    websocket_status = "connected" if ws_connection is not None else "disconnected"
-    
-    # Return comprehensive health information
-    return {
-        "status": "healthy" if model_loaded else "initializing",
-        "model_loaded": model_loaded,
-        "classes_loaded": classes_loaded,
-        "class_count": len(class_names) if classes_loaded else 0,
-        "traffic_classes": [c for c in traffic_classes if c in class_names.values()] if classes_loaded else [],
-        "websocket_connected": ws_connection is not None,
-        "websocket_status": websocket_status,
-        "version": "1.0.0",
-        "timestamp": time.time()
-    }
+@app.get("/health", status_code=200)
+async def health_check():
+    """Endpoint to check if the API is running."""
+    get_model()  # Ensure model is loaded
+    return {"status": "healthy", "model_loaded": model is not None}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time communication"""
+    """Main WebSocket endpoint for real-time detection."""
     await websocket.accept()
+    get_model()  # Pre-load the model on connection
+    
     try:
         while True:
-            # Receive message from client
-            data = await websocket.receive_text()
+            message = await websocket.receive()
             
-            try:
-                # Parse as JSON
-                message = json.loads(data)
-                
-                # Process based on message type
-                if message.get("type") == "detection_request":
-                    if "image" in message:
-                        # Process for detection
-                        result = await process_image(
-                            message["image"],
-                            message.get("confidence", 0.25),
-                            message.get("camera_id")
-                        )
-                        
-                        # Send back results
-                        await websocket.send_json(result)
-                
-                elif message.get("type") == "ping":
-                    await websocket.send_json({"type": "pong", "timestamp": time.time()})
-                
-            except json.JSONDecodeError:
-                await websocket.send_json({"error": "Invalid JSON"})
-            except Exception as e:
-                await websocket.send_json({"error": str(e)})
-                
-    except WebSocketDisconnect:
-        print("WebSocket client disconnected")
-    except Exception as e:
-        print(f"WebSocket error: {e}")
+            # Handle both text (JSON) and bytes (image frame)
+            if isinstance(message, dict) and message.get('type') == 'echo':
+                await websocket.send_json({"response": "pong"})
+                continue
 
-# --- Run the API ---
+            image_data = None
+            if 'bytes' in message:
+                image_data = message['bytes']
+            elif 'text' in message:
+                # Assuming text is base64 encoded image
+                image_data = base64.b64decode(message['text'])
+            
+            if image_data:
+                # Decode image
+                nparr = np.frombuffer(image_data, np.uint8)
+                image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if image is not None:
+                    # Perform detection
+                    results = model(image, verbose=False)[0]  # Get first result
+                    
+                    # Filter detections for specified classes
+                    detections = []
+                    for r in results.boxes.data.tolist():
+                        x1, y1, x2, y2, score, class_id = r
+                        class_name = class_names[int(class_id)]
+                        
+                        if class_name in traffic_classes:
+                            detections.append({
+                                "class": class_name,
+                                "confidence": score,
+                                "bbox": [x1, y1, x2, y2]
+                            })
+                    
+                    # Send results back to Node.js
+                    await websocket.send_json({
+                        "type": "detection-results",
+                        "detections": detections
+                    })
+
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from WebSocket")
+    except Exception as e:
+        logger.error(f"WebSocket Error: {e}")
+
+
+# --- Main execution ---
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "object_detection_api:app", 
-        host="0.0.0.0",
-        port=8000,
-        workers=1,
-        log_level="info"
-    )
+    # Get the model once at startup
+    get_model()
+    
+    # Start the FastAPI server
+    uvicorn.run(app, host="0.0.0.0", port=8000)
