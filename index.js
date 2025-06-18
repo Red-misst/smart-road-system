@@ -5,6 +5,13 @@ import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import axios from 'axios';
+import {
+  createSession,
+  endSession,
+  addDetectionToSession,
+  getSessions,
+  getSessionData
+} from './mongo.js';
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -830,6 +837,71 @@ async function checkDetectionApiHealth() {
 server.on('error', (error) => {
   console.error(`Server error: ${error.message}`);
 });
+
+// --- API: Session Management ---
+server.on('request', async (req, res) => {
+  if (req.url === '/api/session/start' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const { duration, count } = JSON.parse(body);
+        const sessionId = await createSession({ duration, count });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ sessionId }));
+      } catch (e) {
+        res.writeHead(500);
+        res.end('Failed to start session');
+      }
+    });
+    return;
+  }
+  if (req.url === '/api/session/end' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const { sessionId } = JSON.parse(body);
+        await endSession(sessionId);
+        res.writeHead(200);
+        res.end('Session ended');
+      } catch (e) {
+        res.writeHead(500);
+        res.end('Failed to end session');
+      }
+    });
+    return;
+  }
+  if (req.url === '/api/sessions' && req.method === 'GET') {
+    try {
+      const sessions = await getSessions();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sessions));
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Failed to fetch sessions');
+    }
+    return;
+  }
+  if (req.url.startsWith('/api/session/') && req.url.endsWith('/data') && req.method === 'GET') {
+    const sessionId = req.url.split('/')[3];
+    try {
+      const session = await getSessionData(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ session, detections: session.detections || [] }));
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Failed to fetch session data');
+    }
+    return;
+  }
+  // ...existing code...
+});
+
+// --- During detection, add results to session if active ---
+// Example: In processAIResponse or similar detection handler
+// if (currentSessionId) await addDetectionToSession(currentSessionId, detectionResult);
+// ...existing code...
 
 // Start server
 const PORT = process.env.PORT || 3000;
