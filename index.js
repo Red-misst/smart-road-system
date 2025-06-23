@@ -10,7 +10,8 @@ import {
   endSession,
   addDetectionToSession,
   getSessions,
-  getSessionData
+  getSessionData,
+  getSessionDetections
 } from './mongo.js';
 
 // Get current directory
@@ -192,10 +193,194 @@ function startPythonAPI() {
   }
 }
 
+// Keep track of active session
+let activeSessionId = null;
+let sessionStartTime = null;
+let sessionParams = null;
+
 // Create HTTP server with error handling
 const server = createServer(async (req, res) => {
   console.log(`HTTP request: ${req.method} ${req.url}`);
+  // --- API: Session Management ---
+  if (req.url === '/api/session/start' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const { duration, count } = JSON.parse(body);
+        
+        // Check if there's already an active session
+        if (activeSessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'A session is already active. End it before starting a new one.' }));
+          return;
+        }
+        
+        const sessionId = await createSession({ duration, count });
+        
+        // Set as active session
+        activeSessionId = sessionId.toString();
+        sessionStartTime = new Date();
+        sessionParams = { duration, count };
+        
+        // Notify all browser clients about new session
+        for (const browser of clients.browsers) {
+          if (browser.readyState === WebSocket.OPEN) {
+            browser.send(JSON.stringify({
+              type: 'session_status',
+              sessionId: activeSessionId,
+              startTime: sessionStartTime,
+              params: sessionParams,
+              status: 'active'
+            }));
+          }
+        }
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ sessionId }));
+        
+        // Set auto-end timer
+        setTimeout(async () => {
+          if (activeSessionId === sessionId.toString()) {
+            try {
+              await endSession(activeSessionId);
+              
+              // Notify all browser clients about session end
+              for (const browser of clients.browsers) {
+                if (browser.readyState === WebSocket.OPEN) {
+                  browser.send(JSON.stringify({
+                    type: 'session_status',
+                    sessionId: activeSessionId,
+                    status: 'completed'
+                  }));
+                }
+              }
+              
+              // Reset active session
+              activeSessionId = null;
+              sessionStartTime = null;
+              sessionParams = null;
+              
+              console.log(`Session ${sessionId} auto-ended after ${duration} minutes`);
+            } catch (error) {
+              console.error(`Error auto-ending session: ${error.message}`);
+            }
+          }
+        }, duration * 60 * 1000); // Convert minutes to milliseconds
+        
+      } catch (e) {
+        console.error(`Error starting session: ${e.message}`);
+        res.writeHead(500);
+        res.end('Failed to start session');
+      }
+    });
+    return;
+  }
+  if (req.url === '/api/session/end' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      try {
+        const { sessionId } = JSON.parse(body);
+        
+        // Only end if this is the active session
+        if (sessionId !== activeSessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Session ID does not match active session' }));
+          return;
+        }
+        
+        await endSession(sessionId);
+        
+        // Notify all browser clients about session end
+        for (const browser of clients.browsers) {
+          if (browser.readyState === WebSocket.OPEN) {
+            browser.send(JSON.stringify({
+              type: 'session_status',
+              sessionId: sessionId,
+              status: 'completed'
+            }));
+          }
+        }
+        
+        // Reset active session
+        activeSessionId = null;
+        sessionStartTime = null;
+        sessionParams = null;
+        
+        res.writeHead(200);
+        res.end('Session ended');
+      } catch (e) {
+        console.error(`Error ending session: ${e.message}`);
+        res.writeHead(500);
+        res.end('Failed to end session');
+      }
+    });
+    return;
+  }
+  if (req.url === '/api/sessions' && req.method === 'GET') {
+    try {
+      const sessions = await getSessions();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sessions));
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Failed to fetch sessions');
+    }
+    return;
+  }  if (req.url.startsWith('/api/session/') && req.url.endsWith('/data') && req.method === 'GET') {
+    const sessionId = req.url.split('/')[3];
+    try {
+      const session = await getSessionData(sessionId);
+      
+      if (!session) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Session not found' }));
+        return;
+      }
+      
+      // Get latest detections for this session
+      const detections = await getSessionDetections(sessionId, 1000, 0);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        session, 
+        detections,
+        isActive: sessionId === activeSessionId
+      }));
+    } catch (e) {
+      console.error(`Error fetching session data: ${e.message}`);
+      res.writeHead(500);
+      res.end('Failed to fetch session data');
+    }
+    return;
+  }
   
+  // API endpoint for session detections with pagination
+  if (req.url.match(/^\/api\/session\/[^\/]+\/detections/) && req.method === 'GET') {
+    const urlParts = req.url.split('/');
+    const sessionId = urlParts[3];
+    
+    // Parse query parameters
+    const queryString = req.url.split('?')[1] || '';
+    const params = new URLSearchParams(queryString);
+    const limit = parseInt(params.get('limit') || '100', 10);
+    const skip = parseInt(params.get('skip') || '0', 10);
+    
+    try {
+      // Get detections for this session with pagination
+      const detections = await getSessionDetections(sessionId, limit, skip);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ detections }));
+    } catch (e) {
+      console.error(`Error fetching session detections: ${e.message}`);
+      res.writeHead(500);
+      res.end('Failed to fetch session detections');
+    }
+    return;
+  }
+
   // Serve static files from the public directory
   const publicFiles = [
     '/',
@@ -474,7 +659,7 @@ function sendFrameToAI(frame, cameraId) {
  * Process AI detection response
  * @param {Object} message - Detection response from AI
  */
-function processAIResponse(message) {
+async function processAIResponse(message) {
   if (!message || !message.results) return;
   
   const results = message.results;
@@ -484,6 +669,40 @@ function processAIResponse(message) {
   
   // Store detection results
   objectDetection.detectionResults.set(cameraId, results);
+  
+  // Process detections to count objects by class
+  const detections = results.detections || [];
+  let carCount = 0;
+  let accidentCount = 0;
+  
+  detections.forEach(detection => {
+    if (detection.class_name === 'car') {
+      carCount++;
+    } else if (detection.class_name === 'accident') {
+      accidentCount++;
+    }
+  });
+  
+  // Create detection record
+  const detectionRecord = {
+    timestamp: new Date(),
+    cameraId: cameraId,
+    detections: detections,
+    carCount,
+    accidentCount,
+    inference_time: results.inference_time || 0,
+    total_time: results.total_time || 0,
+    image_size: results.image_size || [0, 0]
+  };
+  
+  // If there's an active session, add the detection to MongoDB
+  if (activeSessionId) {
+    try {
+      await addDetectionToSession(activeSessionId, detectionRecord);
+    } catch (error) {
+      console.error(`Error saving detection to MongoDB: ${error.message}`);
+    }
+  }
   
   // Broadcast detection results to browser clients
   broadcastDetectionResults(cameraId, results);
@@ -508,12 +727,18 @@ function broadcastDetectionResults(cameraId, results) {
     cameraId,
     detections: results.detections,
     inference_time: results.inference_time,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    sessionId: activeSessionId // Include the active session ID if there is one
   };
   
   // Send to all connected browsers
   for (const browser of clients.browsers) {
     if (browser.readyState === WebSocket.OPEN) {
+      // If browser is subscribed to a specific session, only send if it matches
+      if (browser.sessionId && browser.sessionId !== activeSessionId) {
+        continue;
+      }
+      
       try {
         browser.send(JSON.stringify(detectionMessage));
       } catch (error) {
@@ -711,14 +936,24 @@ wss.on('connection', (ws, req) => {
         console.error(`Error processing message from AI: ${error.message}`);
       }
     });
-  }
-  else {
+  }  else {
     // Browser client
     clients.browsers.add(ws);
     console.log(`Browser client connected: ${clientIp}`);
     
     // Send camera list to the new browser client
     sendCameraInfo();
+    
+    // Send active session status if there is one
+    if (activeSessionId) {
+      ws.send(JSON.stringify({
+        type: 'session_status',
+        sessionId: activeSessionId,
+        startTime: sessionStartTime,
+        params: sessionParams,
+        status: 'active'
+      }));
+    }
     
     ws.on('message', async (message) => {
       try {
@@ -731,6 +966,11 @@ wss.on('connection', (ws, req) => {
         }
         else if (data.type === 'get_camera_info' && data.cameraId) {
           sendCameraInfo(data.cameraId);
+        }
+        else if (data.type === 'subscribe_session' && data.sessionId) {
+          // Subscribe to a specific session
+          ws.sessionId = data.sessionId;
+          console.log(`Browser client subscribed to session: ${data.sessionId}`);
         }
         else if (data.type === 'request_frame' && data.cameraId) {
           // Send the requested camera's latest frame
@@ -836,66 +1076,6 @@ async function checkDetectionApiHealth() {
 // Server error handling
 server.on('error', (error) => {
   console.error(`Server error: ${error.message}`);
-});
-
-// --- API: Session Management ---
-server.on('request', async (req, res) => {
-  if (req.url === '/api/session/start' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const { duration, count } = JSON.parse(body);
-        const sessionId = await createSession({ duration, count });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ sessionId }));
-      } catch (e) {
-        res.writeHead(500);
-        res.end('Failed to start session');
-      }
-    });
-    return;
-  }
-  if (req.url === '/api/session/end' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const { sessionId } = JSON.parse(body);
-        await endSession(sessionId);
-        res.writeHead(200);
-        res.end('Session ended');
-      } catch (e) {
-        res.writeHead(500);
-        res.end('Failed to end session');
-      }
-    });
-    return;
-  }
-  if (req.url === '/api/sessions' && req.method === 'GET') {
-    try {
-      const sessions = await getSessions();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(sessions));
-    } catch (e) {
-      res.writeHead(500);
-      res.end('Failed to fetch sessions');
-    }
-    return;
-  }
-  if (req.url.startsWith('/api/session/') && req.url.endsWith('/data') && req.method === 'GET') {
-    const sessionId = req.url.split('/')[3];
-    try {
-      const session = await getSessionData(sessionId);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ session, detections: session.detections || [] }));
-    } catch (e) {
-      res.writeHead(500);
-      res.end('Failed to fetch session data');
-    }
-    return;
-  }
-  // ...existing code...
 });
 
 // --- During detection, add results to session if active ---

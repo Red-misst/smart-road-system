@@ -22,9 +22,11 @@ export const map = {
             attributionControl: false // We'll add attribution in better position
         }).setView([0.5132, 35.2712], 14); // Default to center view of both routes
         
-        // Medium-dark gray style with emphasized roads/paths and cleaner UI
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            attribution: '', // Remove from map view
+        // Use a more professional map style suitable for civil engineering applications
+        // Carto's Positron is clean, professional and emphasizes transportation networks
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
             maxZoom: 19
         }).addTo(app.map);
         
@@ -39,7 +41,7 @@ export const map = {
             prefix: false
         }).addTo(app.map);
         
-        // Update coordinates display
+        // Update coordinates display with more precision
         app.map.on('mousemove', (e) => {
             document.getElementById('map-coordinates').innerText = 
                 `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(6)}`;
@@ -136,6 +138,48 @@ export const map = {
     },
     
     /**
+     * Create a custom icon for an intersection based on status
+     */
+    createIntersectionIcon(status) {
+        const statusClass = status === 'red' || status === 'high' ? 'bg-red-600' : 
+                           (status === 'yellow' || status === 'moderate' ? 'bg-yellow-500' : 'bg-green-600');
+        
+        return L.divIcon({
+            className: `rounded-full ${statusClass} flex items-center justify-center`,
+            iconSize: [24, 24],
+            html: '<span class="material-icons" style="font-size: 14px; color: white;">traffic</span>'
+        });
+    },
+    
+    /**
+     * Create popup content for an intersection
+     */
+    createIntersectionPopup(intersection) {
+        const statusColor = intersection.status === 'red' || intersection.status === 'high' ? 
+                          'text-red-600' : 
+                          (intersection.status === 'yellow' || intersection.status === 'moderate' ? 
+                           'text-yellow-600' : 'text-green-600');
+        
+        return `
+            <div class="popup-content">
+                <div class="font-semibold text-gray-800">${intersection.name}</div>
+                <div class="mt-2 text-sm">
+                    <div class="flex items-center mb-1">
+                        <span class="material-icons mr-1 ${statusColor}" style="font-size: 16px;">circle</span>
+                        <span class="font-medium ${statusColor}">Traffic: ${intersection.status.toUpperCase()}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <span class="material-icons mr-1 text-gray-600" style="font-size: 14px;">videocam</span>
+                        <span class="text-gray-600">Camera: ${intersection.cameras ? intersection.cameras[0] : 'None'}</span>
+                    </div>
+                </div>
+                <button class="bg-primary hover:bg-primary-dark text-white px-3 py-1 mt-3 text-xs rounded-full view-details" 
+                        data-id="${intersection.id}">View Analysis</button>
+            </div>
+        `;
+    },
+    
+    /**
      * Add route lines to visualize the two routes
      */
     addRouteLines() {
@@ -160,34 +204,37 @@ export const map = {
             [0.5123, 35.2755] // Same end point
         ];
         
-        // Create polylines for the routes
+        // Create polylines with more professional styling
         const route1Line = L.polyline(route1Coords, {
-            color: '#e53e3e', // Red color for main route
+            color: '#dc2626', // Primary route - red
             weight: 4,
             opacity: 0.8,
-            dashArray: null
+            lineCap: 'round',
+            lineJoin: 'round'
         });
         
         const route2Line = L.polyline(route2Coords, {
-            color: '#38a169', // Green color for alternate route
+            color: '#16a34a', // Alternative route - green
             weight: 4,
             opacity: 0.8,
-            dashArray: null
+            lineCap: 'round',
+            lineJoin: 'round',
+            dashArray: '10, 10' // Dashed to indicate alternative
         });
         
-        // Add markers for start and end points
+        // Add markers for start and end points with more professional styling
         const startMarker = L.marker(route1Coords[0], {
             icon: L.divIcon({
-                className: 'intersection-marker bg-blue-500',
-                iconSize: [12, 12],
+                className: 'rounded-full bg-blue-600 border-2 border-white flex items-center justify-center shadow-md',
+                iconSize: [16, 16],
                 html: '<span style="font-size: 10px; color: white;">S</span>'
             })
         }).addTo(app.map);
         
         const endMarker = L.marker(route1Coords[route1Coords.length - 1], {
             icon: L.divIcon({
-                className: 'intersection-marker bg-purple-500',
-                iconSize: [12, 12],
+                className: 'rounded-full bg-purple-600 border-2 border-white flex items-center justify-center shadow-md',
+                iconSize: [16, 16],
                 html: '<span style="font-size: 10px; color: white;">E</span>'
             })
         }).addTo(app.map);
@@ -266,43 +313,6 @@ export const map = {
         
         // Store marker
         app.markers.set(intersection.id, marker);
-    },
-    
-    /**
-     * Create a custom icon for an intersection based on status
-     */
-    createIntersectionIcon(status) {
-        const statusClass = status === 'red' || status === 'high' ? 'traffic-red' : 
-                           (status === 'yellow' || status === 'moderate' ? 'traffic-yellow' : 'traffic-green');
-        
-        return L.divIcon({
-            className: `intersection-marker ${statusClass}`,
-            iconSize: [24, 24],
-            html: '<span class="material-icons" style="font-size: 14px; color: white;">traffic</span>'
-        });
-    },
-    
-    /**
-     * Create popup content for an intersection
-     */
-    createIntersectionPopup(intersection) {
-        return `
-            <div>
-                <div class="font-medium text-gray-100">${intersection.name}</div>
-                <div class="mt-2 text-sm">
-                    <div class="flex items-center mb-1">
-                        <span class="material-icons mr-1" style="font-size: 14px;">info</span>
-                        <span>Status: ${intersection.status.toUpperCase()}</span>
-                    </div>
-                    <div class="flex items-center">
-                        <span class="material-icons mr-1" style="font-size: 14px;">videocam</span>
-                        <span>Camera: ${intersection.cameras ? intersection.cameras[0] : 'None'}</span>
-                    </div>
-                </div>
-                <button class="bg-accent-green text-white px-3 py-1 mt-3 text-xs rounded-full view-details" 
-                        data-id="${intersection.id}">View Details</button>
-            </div>
-        `;
     },
     
     /**

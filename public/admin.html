@@ -5,18 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Road System - Admin Dashboard</title>
     
-    <!-- Tailwind CSS (Note: Using CDN for development only, use PostCSS plugin for production) -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Leaflet CSS for Maps -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
-          crossorigin=""/>
-    
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
-            crossorigin=""></script>
     
     <!-- Chart.js for data visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -24,8 +14,8 @@
     <!-- Material Icons -->
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
-    <!-- Google Fonts -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
+    <!-- Google Fonts - Using professional fonts for engineering interfaces -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
     
     <!-- Tailwind Config -->
     <script>
@@ -33,36 +23,67 @@
             theme: {
                 extend: {
                     colors: {
-                        'accent-green': '#4CAF50',
-                        'accent-light': '#81C784',
-                        'accent-dark': '#2E7D32',
-                        'surface': '#202124',
-                        'card': '#303134',
+                        'primary': '#2563eb',
+                        'primary-dark': '#1d4ed8',
+                        'secondary': '#475569',
+                        'surface': '#f8fafc',
+                        'surface-dark': '#1e293b',
+                        'card': '#ffffff',
+                        'card-dark': '#0f172a',
+                        'success': '#16a34a',
+                        'warning': '#f59e0b',
+                        'danger': '#dc2626',
+                        'gray-light': '#f1f5f9'
                     },
                     fontFamily: {
-                        'sans': ['Roboto', 'sans-serif'],
+                        'sans': ['Inter', 'sans-serif'],
                     }
                 }
-            }
+            },
+            darkMode: 'class'
         }
     </script>
+    <style>
+        .traffic-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .pulse {
+            animation: pulse-animation 2s infinite;
+        }
+        @keyframes pulse-animation {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
 </head>
-<body class="bg-surface text-gray-200 min-h-screen flex flex-col antialiased">
+<body class="bg-gray-light min-h-screen flex flex-col antialiased">
+    <!-- API Status Banner -->
+    <div id="api-status-banner" class="bg-yellow-500 text-white text-center py-2 hidden">
+        <div class="container mx-auto px-4 flex items-center justify-center gap-2">
+            <span class="material-icons text-sm">sync</span>
+            <span>Connecting to detection service...</span>
+        </div>
+    </div>
+
     <!-- Top Navigation Bar -->
-    <nav class="bg-card shadow-md">
+    <nav class="bg-white shadow-md">
         <div class="container mx-auto px-4 py-3">
             <div class="flex justify-between items-center">
                 <div class="flex items-center space-x-3">
-                    <span class="material-icons text-accent-green">admin_panel_settings</span>
-                    <h1 class="text-white font-medium text-xl">Smart Traffic Admin</h1>
+                    <span class="material-icons text-primary">settings_applications</span>
+                    <h1 class="text-gray-800 font-semibold text-xl">Traffic Analysis Control Panel</h1>
                 </div>
                 <div class="flex items-center space-x-6">
-                    <div class="flex items-center">
-                        <span class="traffic-indicator pulse bg-accent-green mr-2 w-3 h-3 rounded-full"></span>
-                        <span id="system-status" class="text-sm">System Online</span>
+                    <div id="api-status-indicator" class="flex items-center px-3 py-1 rounded-full bg-yellow-50">
+                        <span id="api-status-dot" class="traffic-indicator bg-yellow-400 pulse mr-2"></span>
+                        <span id="api-status-text" class="text-sm text-yellow-700">Initializing API...</span>
                     </div>
-                    <div class="text-sm font-medium" id="current-time">00:00:00</div>
-                    <a href="/" class="bg-card hover:bg-gray-700 text-white px-3 py-1 rounded-md text-sm flex items-center">
+                    <div class="text-sm font-medium text-gray-700" id="current-time">00:00:00</div>
+                    <a href="/" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-md text-sm flex items-center">
                         <span class="material-icons text-sm mr-1">dashboard</span>
                         <span>Dashboard</span>
                     </a>
@@ -74,39 +95,169 @@
     <!-- Main Content -->
     <main class="flex-1 p-4 md:p-6 lg:p-8 flex flex-col gap-8 items-center">
         <!-- Session Control Panel -->
-        <section class="w-full max-w-xl bg-card rounded-lg shadow-md p-6 flex flex-col gap-4">
-            <h2 class="text-xl font-semibold mb-2">Start New Session</h2>
+        <section class="w-full max-w-xl bg-white rounded-lg shadow-md p-6 flex flex-col gap-4 border border-gray-200">
+            <h2 class="text-xl font-semibold text-gray-800 mb-2 flex items-center">
+                <span class="material-icons mr-2 text-primary">timer</span>
+                Traffic Analysis Session Control
+            </h2>
             <form id="session-form" class="flex flex-col gap-3">
                 <div class="flex gap-2">
-                    <input id="session-time" type="number" min="1" placeholder="Duration (minutes)" class="flex-1 px-3 py-2 rounded bg-surface text-gray-200 focus:outline-none" required>
-                    <input id="session-count" type="number" min="1" placeholder="Count" class="flex-1 px-3 py-2 rounded bg-surface text-gray-200 focus:outline-none" required>
+                    <div class="flex-1">
+                        <label for="session-time" class="block text-sm font-medium text-gray-700 mb-1">Duration (minutes)</label>
+                        <input id="session-time" type="number" min="1" placeholder="Enter duration" class="w-full px-3 py-2 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" required>
+                    </div>
+                    <div class="flex-1">
+                        <label for="session-count" class="block text-sm font-medium text-gray-700 mb-1">Count</label>
+                        <input id="session-count" type="number" min="1" placeholder="Enter count" class="w-full px-3 py-2 rounded border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent" required>
+                    </div>
                 </div>
                 <div class="flex gap-2">
-                    <button type="submit" id="start-session-btn" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded transition">Start Session</button>
-                    <button type="button" id="stop-session-btn" class="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded transition hidden">Stop Session</button>
+                    <button type="submit" id="start-session-btn" class="flex-1 bg-primary hover:bg-primary-dark text-white py-2 rounded transition flex items-center justify-center">
+                        <span class="material-icons text-sm mr-1">play_arrow</span>
+                        Start Analysis Session
+                    </button>
+                    <button type="button" id="stop-session-btn" class="flex-1 bg-danger hover:bg-red-700 text-white py-2 rounded transition flex items-center justify-center hidden">
+                        <span class="material-icons text-sm mr-1">stop</span>
+                        Stop Session
+                    </button>
                 </div>
             </form>
-            <div id="session-status" class="text-sm text-gray-400"></div>
+            <div id="session-status" class="text-sm text-gray-500 mt-2"></div>
         </section>
+        
         <!-- Live Video & Stats -->
-        <section id="live-section" class="w-full max-w-2xl bg-card rounded-lg shadow-md p-4 flex flex-col gap-4 hidden">
-            <h3 class="text-lg font-medium">Live Session</h3>
+        <section id="live-section" class="w-full max-w-2xl bg-white rounded-lg shadow-md p-6 flex flex-col gap-4 hidden border border-gray-200">
+            <h3 class="text-lg font-semibold text-gray-800 flex items-center">
+                <span class="material-icons mr-1 text-primary">live_tv</span>
+                Live Traffic Analysis
+            </h3>
             <div class="flex flex-col md:flex-row gap-4 items-start">
-                <canvas id="camera-canvas" class="bg-black rounded w-full md:w-2/3 aspect-video"></canvas>
-                <div class="flex-1">
+                <div class="w-full md:w-2/3 relative">
+                    <canvas id="camera-canvas" class="bg-gray-100 rounded w-full aspect-video border border-gray-200"></canvas>
+                    <div class="absolute top-2 right-2 bg-red-500 text-white text-xs px-2 py-1 rounded-full flex items-center">
+                        <span class="w-2 h-2 bg-white rounded-full mr-1 pulse"></span>
+                        LIVE
+                    </div>
+                </div>
+                <div class="flex-1 bg-gray-50 p-4 rounded border border-gray-200">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Detection Statistics</h4>
                     <div id="detection-stats" class="text-sm"></div>
                 </div>
             </div>
         </section>
+        
         <!-- Session History -->
-        <section class="w-full max-w-2xl bg-card rounded-lg shadow-md p-4 flex flex-col gap-4">
-            <h3 class="text-lg font-medium">Session History</h3>
-            <div id="sessions-list" class="flex flex-col gap-2"></div>
-            <div id="session-data" class="mt-4"></div>
+        <section class="w-full max-w-2xl bg-white rounded-lg shadow-md p-6 flex flex-col gap-4 border border-gray-200">
+            <h3 class="text-lg font-semibold text-gray-800 flex items-center">
+                <span class="material-icons mr-1 text-primary">history</span>
+                Analysis Session History
+            </h3>
+            <div id="sessions-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto"></div>
+            <div id="session-data" class="mt-4 bg-gray-50 p-4 rounded border border-gray-200 max-h-80 overflow-y-auto"></div>
         </section>
     </main>
     
+    <!-- API Status Modal -->
+    <div id="api-status-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">Detection API Status</h3>
+            <p id="api-modal-message" class="text-gray-600 mb-4">
+                The traffic analysis service is initializing. Vehicle detection will be available soon.
+            </p>
+            <div class="flex justify-center mb-4">
+                <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
+            </div>
+            <div class="flex justify-end">
+                <button id="api-modal-close" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Include our modular JavaScript -->
     <script type="module" src="../public/js/admin.js"></script>
+
+    <!-- Add API status check script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // API status elements
+            const apiStatusBanner = document.getElementById('api-status-banner');
+            const apiStatusDot = document.getElementById('api-status-dot');
+            const apiStatusText = document.getElementById('api-status-text');
+            const apiStatusIndicator = document.getElementById('api-status-indicator');
+            const apiStatusModal = document.getElementById('api-status-modal');
+            const apiModalClose = document.getElementById('api-modal-close');
+            const apiModalMessage = document.getElementById('api-modal-message');
+            const startSessionBtn = document.getElementById('start-session-btn');
+            
+            // Show API status banner initially
+            apiStatusBanner.classList.remove('hidden');
+            
+            // Close modal button
+            apiModalClose.addEventListener('click', () => {
+                apiStatusModal.classList.add('hidden');
+            });
+            
+            // Function to check API status
+            function checkApiStatus() {
+                fetch('http://localhost:8000/health')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'healthy' && data.model_loaded) {
+                            // API is ready
+                            apiStatusBanner.classList.add('hidden');
+                            apiStatusDot.classList.remove('bg-yellow-400', 'bg-red-500');
+                            apiStatusDot.classList.add('bg-green-500');
+                            apiStatusDot.classList.remove('pulse');
+                            apiStatusText.textContent = 'API Ready';
+                            apiStatusText.classList.remove('text-yellow-700', 'text-red-700');
+                            apiStatusText.classList.add('text-green-700');
+                            apiStatusIndicator.classList.remove('bg-yellow-50', 'bg-red-50');
+                            apiStatusIndicator.classList.add('bg-green-50');
+                            // Enable start button
+                            startSessionBtn.disabled = false;
+                        }
+                    })
+                    .catch(() => {
+                        // API is not available
+                        apiStatusBanner.classList.remove('hidden');
+                        apiStatusDot.classList.remove('bg-yellow-400', 'bg-green-500');
+                        apiStatusDot.classList.add('bg-red-500', 'pulse');
+                        apiStatusText.textContent = 'API Offline';
+                        apiStatusText.classList.remove('text-yellow-700', 'text-green-700');
+                        apiStatusText.classList.add('text-red-700');
+                        apiStatusIndicator.classList.remove('bg-yellow-50', 'bg-green-50');
+                        apiStatusIndicator.classList.add('bg-red-50');
+                        // Disable start button
+                        startSessionBtn.disabled = true;
+                        
+                        // Show modal after a delay if API is still offline
+                        setTimeout(() => {
+                            if (apiStatusText.textContent === 'API Offline') {
+                                apiStatusModal.classList.remove('hidden');
+                                apiModalMessage.innerHTML = `
+                                    <strong class="text-red-600">The traffic analysis service is currently offline.</strong><br><br>
+                                    You cannot start analysis sessions until the AI service is running.<br><br>
+                                    Please ensure the Python detection service is started before attempting to run a session.
+                                `;
+                            }
+                        }, 5000);
+                    });
+            }
+            
+            // Check status initially after a delay
+            setTimeout(checkApiStatus, 2000);
+            
+            // Check periodically
+            setInterval(checkApiStatus, 10000);
+            
+            // Update time display
+            setInterval(() => {
+                document.getElementById('current-time').textContent = 
+                    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            }, 1000);
+        });
+    </script>
 </body>
 </html>
