@@ -392,10 +392,650 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Smart Road System - Initialized');
 });
 
-// Export for use in other modules
-window.smartRoadApp = {
-    app,
-    websocket,
-    ui,
-    eventHandlers
-};
+// Initialize global variables
+let map,
+    markers = new Map(),
+    intersections = [],
+    routeLines = {},
+    activeRoutes = { visible: false },
+    path;
+
+// Document ready event
+document.addEventListener("DOMContentLoaded", () => {
+  // Initialize map first
+  initializeMap();
+
+  // API status elements
+  const apiStatusBanner = document.getElementById("api-status-banner");
+  const apiStatusDot = document.getElementById("api-status-dot");
+  const apiStatusText = document.getElementById("api-status-text");
+  const apiStatusIndicator = document.getElementById("api-status-indicator");
+  const apiStatusModal = document.getElementById("api-status-modal");
+  const apiModalClose = document.getElementById("api-modal-close");
+  const apiModalMessage = document.getElementById("api-modal-message");
+
+  // Show API status banner initially
+  apiStatusBanner.classList.remove("hidden");
+
+  // Close modal button
+  apiModalClose.addEventListener("click", () => {
+    apiStatusModal.classList.add("hidden");
+  });
+
+  // Setup event listeners for UI elements
+  setupUIEventListeners();
+  
+  // Function to check API status
+  function checkApiStatus() {
+    fetch("http://localhost:8000/health")
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.status === "healthy" && data.model_loaded) {
+          // API is ready
+          apiStatusBanner.classList.add("hidden");
+          apiStatusDot.classList.remove("bg-yellow-400", "bg-red-500");
+          apiStatusDot.classList.add("bg-green-500");
+          apiStatusDot.classList.remove("pulse");
+          apiStatusText.textContent = "API Ready";
+          apiStatusText.classList.remove("text-yellow-700", "text-red-700");
+          apiStatusText.classList.add("text-green-700");
+          apiStatusIndicator.classList.remove("bg-yellow-50", "bg-red-50");
+          apiStatusIndicator.classList.add("bg-green-50");
+        }
+      })
+      .catch(() => {
+        // API is not available
+        apiStatusBanner.classList.remove("hidden");
+        apiStatusDot.classList.remove("bg-yellow-400", "bg-green-500");
+        apiStatusDot.classList.add("bg-red-500", "pulse");
+        apiStatusText.textContent = "API Offline";
+        apiStatusText.classList.remove("text-yellow-700", "text-green-700");
+        apiStatusText.classList.add("text-red-700");
+        apiStatusIndicator.classList.remove("bg-yellow-50", "bg-green-50");
+        apiStatusIndicator.classList.add("bg-red-50");
+
+        // Show modal after a delay if API is still offline
+        setTimeout(() => {
+          if (apiStatusText.textContent === "API Offline") {
+            apiStatusModal.classList.remove("hidden");
+            apiModalMessage.innerHTML = `
+              <strong class="text-red-600">The traffic detection service is currently offline.</strong><br><br>
+              Traffic analysis and vehicle detection require the AI service to be running.<br><br>
+              Please check that the Python AI service has started properly.
+            `;
+          }
+        }, 5000);
+      });
+  }
+
+  // Check status initially after a delay
+  setTimeout(checkApiStatus, 2000);
+
+  // Check periodically
+  setInterval(checkApiStatus, 10000);
+
+  // Update time display
+  setInterval(() => {
+    document.getElementById("current-time").textContent = new Date().toLocaleTimeString(
+      [], 
+      {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }
+    );
+  }, 1000);
+});
+
+function setupUIEventListeners() {
+  // Close buttons setup
+  document.getElementById("close-cameras")?.addEventListener("click", () => {
+    document.getElementById("cameras-section").classList.add("hidden");
+  });
+
+  document.getElementById("close-detail")?.addEventListener("click", () => {
+    document.getElementById("intersection-detail").classList.add("hidden");
+  });
+
+  // Camera toggle button
+  document.getElementById("camera-toggle")?.addEventListener("click", function() {
+    // Toggle camera logic would go here
+    alert("Camera connection feature would activate here");
+  });
+
+  // Sidebar toggle for mobile
+  document.getElementById("sidebar-toggle")?.addEventListener("click", function() {
+    const sidebar = document.getElementById("sidebar");
+    sidebar.classList.toggle("hidden");
+  });
+}
+
+function initializeMap() {
+  // Default location (Nairobi, Kenya)
+  const defaultLocation = [-1.2921, 36.8219];
+  
+  // Create Leaflet map
+  map = L.map("map", {
+    zoomControl: false,
+    attributionControl: false
+  }).setView(defaultLocation, 15);
+
+  // Add tile layer
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19
+  }).addTo(map);
+  
+  // Initialize path
+  path = L.polyline([], { color: 'red', weight: 4 }).addTo(map);
+
+  // Add map style customization
+  const mapStyleElement = document.createElement('style');
+  mapStyleElement.textContent = `
+.leaflet-container {
+  background-color: #e8eef1;       /* soft blue-gray */
+  border: 2px solid #b0c4d1;       /* muted border */
+  border-radius: 12px;             /* rounded corners */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* subtle shadow */
+  padding: 8px;                    /* internal spacing */
+  outline: none;                   /* remove focus outline */
+}
+
+    .leaflet-tile-pane {
+      filter: saturate(1.1) contrast(1.05);
+    }
+    .route-path-animation {
+      stroke-dasharray: 8, 12;
+      animation: dash 30s linear infinite;
+    }
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -1000;
+      }
+    }
+  `;
+  document.head.appendChild(mapStyleElement);
+
+  // Add zoom control to top-right
+  L.control.zoom({
+    position: "topright"
+  }).addTo(map);
+
+  // Add attribution to bottom-right
+  L.control.attribution({
+    position: "bottomright",
+    prefix: false
+  }).addTo(map);
+
+  // Update coordinates display
+  map.on("mousemove", (e) => {
+    document.getElementById("map-coordinates").innerText = 
+      `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(6)}`;
+  });
+
+  // Setup map-related event listeners
+  setupMapEventListeners();
+
+  // Add sample intersections
+  addSampleIntersections();
+
+  // Add route lines
+  addRouteLines();
+
+  // Fix map display
+  fixMapDisplay();
+}
+
+function setupMapEventListeners() {
+  document.getElementById("map-fullscreen-btn").addEventListener("click", toggleFullscreen);
+  document.getElementById("show-cameras-btn").addEventListener("click", toggleCamerasSection);
+  document.getElementById("show-routes-btn").addEventListener("click", toggleRouteLines);
+  document.getElementById("toggle-route-planner-btn").addEventListener("click", toggleRoutePlanner);
+  document.getElementById("close-route-planner").addEventListener("click", () => {
+    document.getElementById("route-planner-panel").classList.add("hidden");
+  });
+  document.getElementById("calculate-route-btn").addEventListener("click", calculateAndDisplayRoute);
+  document.getElementById("pick-start-point").addEventListener("click", () => enableMapPointSelection("start"));
+  document.getElementById("pick-end-point").addEventListener("click", () => enableMapPointSelection("end"));
+}
+
+// Route planning functionality
+let routeMarkers = { start: null, end: null };
+let currentRoutePolyline = null;
+let mapSelectionMode = null; // 'start', 'end', or null
+
+function toggleRoutePlanner() {
+  const routePlannerPanel = document.getElementById("route-planner-panel");
+  routePlannerPanel.classList.toggle("hidden");
+
+  // Populate location dropdowns with intersection names
+  if (!routePlannerPanel.classList.contains("hidden")) {
+    populateLocationDropdowns();
+  }
+}
+
+function populateLocationDropdowns() {
+  const startSelect = document.getElementById("start-point");
+  const endSelect = document.getElementById("end-point");
+
+  // Clear existing options (except the first one)
+  while (startSelect.options.length > 1) startSelect.options.remove(1);
+  while (endSelect.options.length > 1) endSelect.options.remove(1);
+
+  // Add intersection options
+  intersections.forEach((intersection) => {
+    const startOption = document.createElement("option");
+    startOption.value = `${intersection.lat},${intersection.lng}`;
+    startOption.textContent = intersection.name;
+    startSelect.appendChild(startOption);
+
+    const endOption = document.createElement("option");
+    endOption.value = `${intersection.lat},${intersection.lng}`;
+    endOption.textContent = intersection.name;
+    endSelect.appendChild(endOption);
+  });
+
+  // Set up change event listeners for dropdown selections
+  startSelect.addEventListener("change", function () {
+    if (this.value) {
+      const [lat, lng] = this.value.split(",").map(parseFloat);
+      setRoutePoint("start", [lat, lng], intersection.name);
+    }
+  });
+
+  endSelect.addEventListener("change", function () {
+    if (this.value) {
+      const [lat, lng] = this.value.split(",").map(parseFloat);
+      setRoutePoint("end", [lat, lng], intersection.name);
+    }
+  });
+}
+
+function enableMapPointSelection(pointType) {
+  // Update selection mode
+  mapSelectionMode = pointType;
+
+  // Update cursor and show helper message
+  map.getContainer().style.cursor = "crosshair";
+
+  // Show a notification to the user
+  const apiStatusBanner = document.getElementById("api-status-banner");
+  apiStatusBanner.classList.remove("hidden", "bg-yellow-500");
+  apiStatusBanner.classList.add("bg-blue-500");
+  apiStatusBanner.innerHTML = `<div class="container mx-auto px-4 flex items-center justify-center gap-2">
+    <span class="material-icons text-sm">place</span>
+    <span>Click on the map to select ${pointType === "start" ? "starting point" : "destination"}</span>
+    <button id="cancel-selection" class="ml-4 bg-white bg-opacity-20 px-2 py-1 rounded text-xs">Cancel</button>
+  </div>`;
+
+  document.getElementById("cancel-selection").addEventListener("click", cancelMapPointSelection);
+
+  // Add one-time click handler to the map
+  map.once("click", function (e) {
+    setRoutePoint(pointType, [e.latlng.lat, e.latlng.lng]);
+    cancelMapPointSelection();
+  });
+}
+
+function cancelMapPointSelection() {
+  mapSelectionMode = null;
+  map.getContainer().style.cursor = "";
+  const apiStatusBanner = document.getElementById("api-status-banner");
+  apiStatusBanner.classList.add("hidden");
+}
+
+function setRoutePoint(pointType, coordinates, name = null) {
+  // Remove existing marker if any
+  if (routeMarkers[pointType]) {
+    map.removeLayer(routeMarkers[pointType]);
+  }
+
+  // Create marker icon based on point type
+  const markerIcon = L.divIcon({
+    className: `shadow-lg rounded-full bg-${pointType === "start" ? "green" : "red"}-600 flex items-center justify-center border-2 border-white`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    html: `<span class="material-icons" style="font-size: 16px; color: white;">
+      ${pointType === "start" ? "trip_origin" : "place"}
+    </span>`
+  });
+
+  // Create and add new marker
+  routeMarkers[pointType] = L.marker(coordinates, {
+    icon: markerIcon,
+    draggable: true
+  }).addTo(map);
+
+  // Set popup content
+  const popupContent = `<div class="font-medium p-1">
+    <div class="text-${pointType === "start" ? "green" : "red"}-600 font-bold">
+      ${pointType === "start" ? "Starting Point" : "Destination"}
+    </div>
+    ${name ? "<div class='text-gray-600 text-sm'>" + name + "</div>" : ""}
+  </div>`;
+  
+  routeMarkers[pointType].bindPopup(popupContent);
+
+  // Update dropdown selection if using a custom point
+  if (!name) {
+    document.getElementById(`${pointType}-point`).selectedIndex = 0;
+  }
+
+  // Event handler for when marker is dragged
+  routeMarkers[pointType].on("dragend", function () {
+    if (routeMarkers.start && routeMarkers.end) {
+      calculateAndDisplayRoute();
+    }
+  });
+  
+  // If both markers are set, calculate route
+  if (routeMarkers.start && routeMarkers.end) {
+    calculateAndDisplayRoute();
+  }
+}
+
+function calculateAndDisplayRoute() {
+  // Check if both start and end points are set
+  if (!routeMarkers.start || !routeMarkers.end) {
+    alert("Please select both starting point and destination");
+    return;
+  }
+
+  // Remove existing route if any
+  if (currentRoutePolyline) {
+    map.removeLayer(currentRoutePolyline);
+  }
+
+  // Get coordinates
+  const startPoint = routeMarkers.start.getLatLng();
+  const endPoint = routeMarkers.end.getLatLng();
+  
+  // Show loading indicator
+  const apiStatusBanner = document.getElementById("api-status-banner");
+  apiStatusBanner.classList.remove("hidden");
+  apiStatusBanner.classList.add("bg-blue-500");
+  apiStatusBanner.innerHTML = `<div class="container mx-auto px-4 flex items-center justify-center gap-2">
+    <span class="material-icons text-sm animate-spin">sync</span>
+    <span>Calculating best route...</span>
+  </div>`;
+  
+  // Use OSRM API to get actual road routes
+  const osrmAPI = `https://router.project-osrm.org/route/v1/driving/${startPoint.lng},${startPoint.lat};${endPoint.lng},${endPoint.lat}?overview=full&geometries=geojson`;
+  
+  fetch(osrmAPI)
+    .then(response => response.json())
+    .then(data => {
+      apiStatusBanner.classList.add("hidden");
+      
+      if (data.code === 'Ok' && data.routes.length > 0) {
+        // Get the coordinates from the route
+        const routeCoordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        
+        // Create route polyline with animation effect
+        currentRoutePolyline = L.polyline(routeCoordinates, {
+          color: '#3b82f6',
+          weight: 5,
+          opacity: 0.8,
+          lineCap: 'round',
+          lineJoin: 'round',
+          className: 'route-path-animation'
+        }).addTo(map);
+        
+        // Add route info
+        const duration = Math.round(data.routes[0].duration / 60); // minutes
+        const distance = (data.routes[0].distance / 1000).toFixed(1); // km
+        
+        currentRoutePolyline.bindTooltip(`
+          <div class="font-medium text-sm">
+            <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
+            <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
+          </div>
+        `, {sticky: true});
+        
+        // Fit map bounds to show the entire route
+        map.fitBounds(currentRoutePolyline.getBounds(), {
+          padding: [50, 50]
+        });
+      } else {
+        alert('Unable to calculate route. Please try different points.');
+      }
+    })
+    .catch(error => {
+      apiStatusBanner.classList.add("hidden");
+      alert('Error calculating route: ' + error.message);
+    });
+}
+
+function addSampleIntersections() {
+  intersections = [
+    {
+      id: "int1",
+      name: "Main St & Central Ave",
+      lat: 0.513,
+      lng: 35.27,
+      status: "green",
+      cameras: ["cam1"]
+    },
+    {
+      id: "int2",
+      name: "Highway 101 & Oak St",
+      lat: 0.514,
+      lng: 35.272,
+      status: "yellow",
+      cameras: ["cam2"]
+    },
+    {
+      id: "int3",
+      name: "Industrial Rd & Pine Ave",
+      lat: 0.5125,
+      lng: 35.275,
+      status: "red",
+      cameras: ["cam3"]
+    }
+  ];
+
+  intersections.forEach((intersection) => {
+    addIntersectionMarker(intersection);
+  });
+
+  // Update counts
+  document.getElementById("intersections-count").textContent = intersections.length;
+  document.getElementById("cameras-count").textContent = intersections.length;
+
+  const congestedCount = intersections.filter((i) => i.status === "red").length;
+  document.getElementById("congested-count").textContent = congestedCount;
+}
+
+function addIntersectionMarker(intersection) {
+  const icon = createIntersectionIcon(intersection.status);
+
+  const marker = L.marker([intersection.lat, intersection.lng], {
+    icon,
+    title: intersection.name
+  }).addTo(map);
+
+  marker.bindPopup(createIntersectionPopup(intersection));
+  markers.set(intersection.id, marker);
+}
+
+function createIntersectionIcon(status) {
+  const statusClass =
+    status === "red"
+      ? "bg-red-600"
+      : status === "yellow"
+      ? "bg-yellow-500"
+      : "bg-green-600";
+
+  return L.divIcon({
+    className: `rounded-full ${statusClass} flex items-center justify-center`,
+    iconSize: [24, 24],
+    html: '<span class="material-icons" style="font-size: 14px; color: white;">traffic</span>'
+  });
+}
+
+function createIntersectionPopup(intersection) {
+  const statusColor =
+    intersection.status === "red"
+      ? "text-red-600"
+      : intersection.status === "yellow"
+      ? "text-yellow-600"
+      : "text-green-600";
+
+  return `
+    <div class="popup-content">
+      <div class="font-semibold text-gray-800">${intersection.name}</div>
+      <div class="mt-2 text-sm">
+        <div class="flex items-center mb-1">
+          <span class="material-icons mr-1 ${statusColor}" style="font-size: 16px;">circle</span>
+          <span class="font-medium ${statusColor}">Traffic: ${intersection.status.toUpperCase()}</span>
+        </div>
+        <div class="flex items-center">
+          <span class="material-icons mr-1 text-gray-600" style="font-size: 14px;">videocam</span>
+          <span class="text-gray-600">Camera: ${intersection.cameras ? intersection.cameras[0] : "None"}</span>
+        </div>
+      </div>
+      <button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 mt-3 text-xs rounded-full" 
+              onclick="showIntersectionDetails('${intersection.id}')">View Analysis</button>
+    </div>
+  `;
+}
+
+function addRouteLines() {
+  // Main Highway Route (red)
+  const route1Coords = [
+    [0.5142, 35.2697],
+    [0.5138, 35.271],
+    [0.5132, 35.2725],
+    [0.5126, 35.274],
+    [0.5123, 35.2755]
+  ];
+
+  // Alternate Bypass Route (green)
+  const route2Coords = [
+    [0.5142, 35.2697],
+    [0.515, 35.271],
+    [0.5155, 35.2725],
+    [0.5145, 35.274],
+    [0.5123, 35.2755]
+  ];
+
+  const route1Line = L.polyline(route1Coords, {
+    color: "#dc2626",
+    weight: 4,
+    opacity: 0.8,
+    lineCap: "round",
+    lineJoin: "round"
+  });
+
+  const route2Line = L.polyline(route2Coords, {
+    color: "#16a34a",
+    weight: 4,
+    opacity: 0.8,
+    lineCap: "round",
+    lineJoin: "round",
+    dashArray: "10, 10"
+  });
+
+  routeLines = {
+    "route-1": route1Line,
+    "route-2": route2Line
+  };
+}
+
+function toggleRouteLines() {
+  const routeVisible = !activeRoutes.visible;
+  activeRoutes.visible = routeVisible;
+
+  Object.values(routeLines).forEach((line) => {
+    if (routeVisible) {
+      if (!map.hasLayer(line)) {
+        map.addLayer(line);
+      }
+    } else {
+      if (map.hasLayer(line)) {
+        map.removeLayer(line);
+      }
+    }
+  });
+
+  const btn = document.getElementById("show-routes-btn");
+  if (btn) {
+    btn.innerHTML = routeVisible
+      ? '<span class="material-icons text-sm mr-1">visibility_off</span> Hide Routes'
+      : '<span class="material-icons text-sm mr-1">alt_route</span> Routes';
+  }
+}
+
+function toggleFullscreen() {
+  const mapElement = document.getElementById("map");
+  const isFullscreen = mapElement.classList.contains("fixed");
+
+  if (!isFullscreen) {
+    mapElement.classList.add(
+      "fixed",
+      "top-0",
+      "left-0",
+      "w-full",
+      "h-full",
+      "z-50"
+    );
+    document
+      .getElementById("map-fullscreen-btn")
+      .querySelector("span").textContent = "fullscreen_exit";
+  } else {
+    mapElement.classList.remove(
+      "fixed",
+      "top-0",
+      "left-0",
+      "w-full",
+      "h-full",
+      "z-50"
+    );
+    document
+      .getElementById("map-fullscreen-btn")
+      .querySelector("span").textContent = "fullscreen";
+  }
+
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 100);
+}
+
+function toggleCamerasSection() {
+  const camerasSection = document.getElementById("cameras-section");
+  const isHidden = camerasSection.classList.contains("hidden");
+
+  if (isHidden) {
+    camerasSection.classList.remove("hidden");
+  } else {
+    camerasSection.classList.add("hidden");
+  }
+}
+
+function showIntersectionDetails(intersectionId) {
+  const intersection = intersections.find((i) => i.id === intersectionId);
+  if (intersection) {
+    const detailSection = document.getElementById("intersection-detail");
+    document.getElementById("detail-title").innerHTML = `
+      <span class="material-icons text-primary mr-1">traffic</span>
+      <span>${intersection.name}</span>
+    `;
+    document.getElementById("detail-density").textContent = intersection.status.toUpperCase();
+    document.getElementById("detail-vehicles").textContent = Math.floor(Math.random() * 20) + 5;
+
+    detailSection.classList.remove("hidden");
+  }
+}
+
+function fixMapDisplay() {
+  window.addEventListener("resize", () => {
+    map.invalidateSize();
+  });
+
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 500);
+}
+
+// Make the showIntersectionDetails function globally available for the onClick in the popup
+window.showIntersectionDetails = showIntersectionDetails;

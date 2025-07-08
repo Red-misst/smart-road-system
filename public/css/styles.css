@@ -1,0 +1,124 @@
+.traffic-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.traffic-green {
+  background-color: #16a34a;
+}
+.traffic-yellow {
+  background-color: #f59e0b;
+}
+.traffic-red {
+  background-color: #dc2626;
+}
+.pulse {
+  animation: pulse-animation 2s infinite;
+}
+@keyframes pulse-animation {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.api-status-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  text-align: center;
+  padding: 8px;
+  font-weight: 500;
+  animation: slideDown 0.3s ease-out;
+  transform-origin: top;
+}
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.sidebar-transition {
+  transition: width 0.3s ease-in-out;
+}
+.live-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background-color: rgba(220, 38, 38, 0.8);
+  color: white;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.live-indicator:before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: white;
+  border-radius: 50%;
+  margin-right: 4px;
+  animation: pulse-animation 1.5s infinite;
+}
+.detection-box {
+  position: absolute;
+  border: 2px solid;
+  pointer-events: none;
+}
+/* Map and route styles */
+.route-path-animation {
+  stroke-dasharray: 8, 12;
+  animation: dash 30s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.leaflet-popup-content {
+  margin: 10px 12px;
+  line-height: 1.4;
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+}
+
+.leaflet-control-zoom a {
+  background-color: white !important;
+  color: #4b5563 !important;
+}
+
+/* Leaflet container styles */
+.leaflet-container {
+  background-color: #e8eef1;
+  outline: 0;
+}
+
+.leaflet-tile-pane {
+  filter: saturate(1.1) contrast(1.05);
+}

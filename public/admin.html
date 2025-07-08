@@ -123,6 +123,12 @@
                 </div>
             </form>
             <div id="session-status" class="text-sm text-gray-500 mt-2"></div>
+            
+            <!-- Session Countdown Timer (initially hidden) -->
+            <div id="session-timer-container" class="hidden mt-3 p-3 bg-blue-50 rounded-md border border-blue-100 flex items-center justify-center">
+                <span class="material-icons text-primary mr-2">timer</span>
+                <div class="text-primary font-semibold text-xl" id="session-countdown">00:00</div>
+            </div>
         </section>
         
         <!-- Live Video & Stats -->
@@ -190,6 +196,130 @@
             const apiModalClose = document.getElementById('api-modal-close');
             const apiModalMessage = document.getElementById('api-modal-message');
             const startSessionBtn = document.getElementById('start-session-btn');
+            
+            // Session timer elements
+            const sessionForm = document.getElementById('session-form');
+            const sessionTimeInput = document.getElementById('session-time');
+            const sessionCountInput = document.getElementById('session-count');
+            const stopSessionBtn = document.getElementById('stop-session-btn');
+            const sessionTimerContainer = document.getElementById('session-timer-container');
+            const sessionCountdown = document.getElementById('session-countdown');
+            const sessionStatus = document.getElementById('session-status');
+            const liveSection = document.getElementById('live-section');
+            
+            // Timer variables
+            let countdownInterval;
+            let remainingSeconds = 0;
+            let currentSessionId = null;
+            
+            // Format seconds to MM:SS
+            function formatTime(seconds) {
+                const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const secs = (seconds % 60).toString().padStart(2, '0');
+                return `${mins}:${secs}`;
+            }
+            
+            // Handle session form submission
+            sessionForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                // Get duration in minutes and convert to seconds
+                const durationMinutes = parseInt(sessionTimeInput.value);
+                const count = parseInt(sessionCountInput.value);
+                remainingSeconds = durationMinutes * 60;
+                
+                // Disable button during API call
+                startSessionBtn.disabled = true;
+                sessionStatus.textContent = 'Starting session...';
+                
+                try {
+                    // Call API to start session
+                    const res = await fetch('/api/session/start', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ duration: durationMinutes, count: count })
+                    });
+                    const data = await res.json();
+                    
+                    if (data.sessionId) {
+                        // Store session ID
+                        currentSessionId = data.sessionId;
+                        
+                        // Update UI
+                        startSessionBtn.classList.add('hidden');
+                        stopSessionBtn.classList.remove('hidden');
+                        sessionTimerContainer.classList.remove('hidden');
+                        liveSection.classList.remove('hidden');
+                        sessionStatus.textContent = `Session active (ID: ${currentSessionId})`;
+                        
+                        // Start the countdown
+                        updateCountdownDisplay();
+                        countdownInterval = setInterval(function() {
+                            remainingSeconds--;
+                            updateCountdownDisplay();
+                            
+                            if (remainingSeconds <= 0) {
+                                endSession();
+                            }
+                        }, 1000);
+                    } else {
+                        sessionStatus.textContent = 'Failed to start session.';
+                        startSessionBtn.disabled = false;
+                    }
+                } catch (err) {
+                    sessionStatus.textContent = 'Error starting session: ' + err.message;
+                    startSessionBtn.disabled = false;
+                }
+            });
+            
+            // Update the countdown display
+            function updateCountdownDisplay() {
+                sessionCountdown.textContent = formatTime(remainingSeconds);
+                
+                // Add visual indicators when time is running low
+                if (remainingSeconds < 30) {
+                    sessionCountdown.classList.add('text-red-600');
+                } else {
+                    sessionCountdown.classList.remove('text-red-600');
+                }
+            }
+            
+            // Handle stopping the session
+            stopSessionBtn.addEventListener('click', function() {
+                endSession();
+                
+                // Here you would add code to stop the actual detection session
+                // through your API
+            });
+            
+            // End session and clean up
+            async function endSession() {
+                clearInterval(countdownInterval);
+                
+                if (currentSessionId) {
+                    sessionStatus.textContent = 'Ending session...';
+                    try {
+                        await fetch(`/api/session/end`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ sessionId: currentSessionId })
+                        });
+                        sessionStatus.textContent = `Session ${currentSessionId} completed`;
+                    } catch (err) {
+                        sessionStatus.textContent = 'Error ending session: ' + err.message;
+                    }
+                }
+                
+                // Reset UI
+                stopSessionBtn.classList.add('hidden');
+                startSessionBtn.classList.remove('hidden');
+                startSessionBtn.disabled = false;
+                sessionTimerContainer.classList.add('hidden');
+                
+                // Don't immediately hide the live section to allow viewing results
+                // Reset session ID
+                currentSessionId = null;
+            }
             
             // Show API status banner initially
             apiStatusBanner.classList.remove('hidden');
