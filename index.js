@@ -25,37 +25,33 @@ const clients = {
   ai: null // AI WebSocket connection
 };
 
-// Settings for video streaming - optimized for 60fps delivery
+// Settings for video streaming - simplified for direct streaming
 const streamSettings = {
-  frameInterval: 16, // ~60 fps (milliseconds between frames to browsers)
-  maxQueueSize: 2,   // Smaller queue for lower latency
-  lastFrameSent: new Map(),
-  frameQueue: new Map(),
-  latestFrames: new Map(), // Store latest frame from each camera: Map<cameraId, frame>
+  latestFrames: new Map(), // Store only latest frame from each camera for AI detection
   frameCounter: new Map(), // Count frames per camera for logging
   lastLogTime: new Map()   // Track last log time per camera
 };
 
-// Object detection configuration - optimized for active sessions only
+// Object detection configuration - simplified to 5fps max
 const objectDetection = {
   enabled: true,
-  apiEndpoint: 'ws://localhost:8000/ws', // Using WebSocket for better performance
-  httpApiEndpoint: 'http://localhost:8000/detect', // HTTP endpoint as backup
-  confidenceThreshold: 0.45, // Using default from Python AI configuration
-  detectionInterval: 200, // ms between detections (limit to ~5 fps for AI to avoid overloading)
-  lastDetectionTime: new Map(), // Track last detection time per camera
-  detectionResults: new Map(), // Store latest detection results per camera
-  processingCount: 0, // Track currently processing detections
-  maxConcurrent: 2, // Maximum concurrent detection requests (reduced to avoid overloading)
-  errorCount: 0, // Track consecutive errors
-  maxErrors: 10, // Maximum consecutive errors before disabling
-  pythonProcess: null, // Store reference to the Python process
-  trafficStatus: new Map(), // Track traffic status for each intersection: Map<cameraId, status>
-  detectionLog: new Map(), // Comprehensive detection logging per session
+  apiEndpoint: 'ws://localhost:8000/ws',
+  httpApiEndpoint: 'http://localhost:8000/detect',
+  confidenceThreshold: 0.45,
+  detectionInterval: 200, // 200ms = 5fps maximum
+  lastDetectionTime: new Map(),
+  detectionResults: new Map(),
+  processingCount: 0,
+  maxConcurrent: 1, // Simplified to 1 concurrent detection
+  errorCount: 0,
+  maxErrors: 10,
+  pythonProcess: null,
+  trafficStatus: new Map(),
+  detectionLog: new Map(),
   rateLimit: {
-    maxRequestsPerMinute: 300, // Maximum requests per minute (5 per second)
-    requestCounter: 0,  // Counter for current period
-    lastResetTime: Date.now(), // Last time the counter was reset
+    maxRequestsPerMinute: 300, // 5fps * 60 = 300 per minute
+    requestCounter: 0,
+    lastResetTime: Date.now(),
   }
 };
 
@@ -606,44 +602,37 @@ function generateAlternativeRoutes(cameraId, density) {
 }
 
 /**
- * Process and distribute video frames - optimized for 60fps streaming to frontend
+ * Process video frames - simplified to only store latest frame for AI
  * @param {Buffer} frame - Binary JPEG frame data
  * @param {string} cameraId - ID of the camera source
  */
 function processVideoFrame(frame, cameraId) {
   const now = Date.now();
   
-  // Store the latest frame from this camera
+  // Store only the latest frame from this camera for AI detection
   streamSettings.latestFrames.set(cameraId, frame);
   
-  // Update frame counter for this camera
+  // Update frame counter for logging
   const currentCount = streamSettings.frameCounter.get(cameraId) || 0;
   streamSettings.frameCounter.set(cameraId, currentCount + 1);
   
   // Log frame statistics every 5 seconds
   const lastLog = streamSettings.lastLogTime.get(cameraId) || 0;
-  if (now - lastLog > 5000) { // Log every 5 seconds
+  if (now - lastLog > 5000) {
     const frameCount = streamSettings.frameCounter.get(cameraId) || 0;
     const fps = frameCount / ((now - lastLog) / 1000);
-    console.log(`[FRAME STATS] Camera ${cameraId}: Receiving ~${fps.toFixed(1)} fps, frame size: ${frame.length} bytes`);
+    console.log(`[FRAME STATS] Camera ${cameraId}: Receiving ~${fps.toFixed(1)} fps, storing latest frame for AI`);
     streamSettings.lastLogTime.set(cameraId, now);
     streamSettings.frameCounter.set(cameraId, 0);
   }
   
-  // Stream to browsers at 60fps (forward all frames immediately for real-time viewing)
-  broadcastFrameToBrowsers(frame, cameraId);
+  // NO MORE BROADCASTING TO BROWSERS - Direct streaming only
   
-  // Log session and AI detection status every 50 frames to reduce spam
-  if (Math.random() < 0.02) { // 2% chance = roughly every 50 frames
-    console.log(`[DETECTION STATUS] Session: ${activeSessionId || 'NONE'}, AI enabled: ${objectDetection.enabled}, AI connected: ${clients.ai ? 'YES' : 'NO'}`);
-  }
-  
-  // Perform object detection ONLY if all conditions are met
+  // Perform object detection at 5fps maximum if conditions are met
   if (objectDetection.enabled && clients.ai && activeSessionId) {
     
     // Check rate limiting
     if (now - objectDetection.rateLimit.lastResetTime > 60000) {
-      // Reset counter every minute
       objectDetection.rateLimit.requestCounter = 0;
       objectDetection.rateLimit.lastResetTime = now;
     }
@@ -652,133 +641,53 @@ function processVideoFrame(frame, cameraId) {
     if (objectDetection.rateLimit.requestCounter < objectDetection.rateLimit.maxRequestsPerMinute) {
       const lastDetection = objectDetection.lastDetectionTime.get(cameraId) || 0;
       
-      // Only run detection if enough time has passed since last detection (reduced frequency for AI)
+      // Only run detection if enough time has passed (200ms = 5fps)
       if (now - lastDetection >= objectDetection.detectionInterval) {
-        // Update last detection time right away to prevent scheduling too many
         objectDetection.lastDetectionTime.set(cameraId, now);
-        
-        // Increment the rate limit counter
         objectDetection.rateLimit.requestCounter++;
         
-        console.log(`[DETECTION TRIGGER] Sending frame to AI for processing (rate limit: ${objectDetection.rateLimit.requestCounter}/${objectDetection.rateLimit.maxRequestsPerMinute})`);
+        console.log(`[DETECTION TRIGGER] Sending latest frame to AI (5fps limit: ${objectDetection.rateLimit.requestCounter}/${objectDetection.rateLimit.maxRequestsPerMinute})`);
         
-        // Send frame to AI via WebSocket
+        // Send the current latest frame to AI
         sendFrameToAI(frame, cameraId);
       }
-    } else {
-      // Log rate limiting occasionally
-      if (Math.random() < 0.01) {
-        console.log(`[RATE LIMIT] Rate limit reached for object detection: ${objectDetection.rateLimit.requestCounter} requests in the last minute`);
-      }
-    }
-  } else {
-    // Log why detection is skipped occasionally
-    if (Math.random() < 0.005) { // Very rarely to avoid spam
-      const reasons = [];
-      if (!objectDetection.enabled) reasons.push('AI disabled');
-      if (!clients.ai) reasons.push('AI not connected');
-      if (!activeSessionId) reasons.push('No active session');
-      
-      if (reasons.length > 0) {
-        console.log(`[DETECTION SKIP] Not eligible for AI processing: ${reasons.join(', ')}`);
-      }
     }
   }
 }
 
-/**
- * Broadcast frame to all connected browser clients at 60fps
- * @param {Buffer} frame - Binary JPEG frame data
- * @param {string} cameraId - ID of the camera source
- */
-function broadcastFrameToBrowsers(frame, cameraId) {
-  const now = Date.now();
-  const lastSent = streamSettings.lastFrameSent.get(cameraId) || 0;
-  
-  // Enforce 60fps limit for browser streaming (16ms interval)
-  if (now - lastSent >= streamSettings.frameInterval) {
-    streamSettings.lastFrameSent.set(cameraId, now);
-    
-    // Broadcast to all browser clients
-    let successCount = 0;
-    let errorCount = 0;
-    
-    for (const browser of clients.browsers) {
-      if (browser.readyState === WebSocket.OPEN && 
-          // Only send to browsers subscribed to this session or browsers without specific session
-          (!browser.sessionId || browser.sessionId === activeSessionId)) {
-        try {
-          // First send metadata about the frame
-          browser.send(JSON.stringify({
-            type: 'frame_metadata',
-            cameraId: cameraId,
-            timestamp: now
-          }));
-          
-          // Then send the actual binary frame
-          browser.send(frame, { binary: true });
-          successCount++;
-        } catch (error) {
-          console.error(`[BROWSER STREAMING] Error sending frame to browser: ${error.message}`);
-          errorCount++;
-        }
-      }
-    }
-    
-    // Log broadcasting stats occasionally
-    if (Math.random() < 0.01) { // 1% chance = roughly every 100 frames
-      console.log(`[BROWSER STREAMING] Sent to ${successCount} browsers, ${errorCount} errors`);
-    }
-  }
-}
+// REMOVE broadcastFrameToBrowsers function - no longer needed
 
 /**
- * Send frame to AI service via WebSocket (only during active sessions)
+ * Send current frame to AI service - simplified
  * @param {Buffer} frame - Binary JPEG frame data
  * @param {string} cameraId - ID of the camera source
  */
 function sendFrameToAI(frame, cameraId) {
-  // Only send frames to AI if there's an active session
   if (!activeSessionId) {
-    if (Math.random() < 0.01) { // Log occasionally to avoid console spam
-      console.log('[AI FRAME] Skipping AI detection: No active session');
-    }
     return;
   }
   
-  // Check if AI WebSocket is connected and try to reconnect if not
   if (!clients.ai || clients.ai.readyState !== WebSocket.OPEN) {
     console.warn('[AI FRAME] AI service not connected, skipping detection');
-    
-    // Try to start the Python API if it's not running
-    if (!objectDetection.pythonProcess || objectDetection.pythonProcess.exitCode !== null) {
-      console.log('[AI FRAME] Attempting to start Python API...');
-      startPythonAPI();
-    }
     return;
   }
   
-  // Validate camera ID
   if (!cameraId) {
-    console.warn('[AI FRAME] sendFrameToAI: cameraId is missing or unknown!');
+    console.warn('[AI FRAME] Missing camera ID');
     return;
   }
   
-  // Check if we're under the processing limit
+  // Simplified: only allow 1 concurrent detection
   if (objectDetection.processingCount >= objectDetection.maxConcurrent) {
-    if (Math.random() < 0.05) { // Log occasionally to avoid console spam
-      console.log(`[AI FRAME] Skipping detection: already processing ${objectDetection.processingCount} frames`);
-    }
+    console.log(`[AI FRAME] Skipping detection: already processing`);
     return;
   }
   
   try {
-    // Increment the processing counter
     objectDetection.processingCount++;
     
-    console.log(`[AI FRAME] Sending frame from camera ${cameraId} to AI for processing (session: ${activeSessionId}, queue: ${objectDetection.processingCount})`);
+    console.log(`[AI FRAME] Sending frame from camera ${cameraId} to AI (session: ${activeSessionId})`);
     
-    // Create detection request with metadata
     const metadata = {
       type: 'detection_request_metadata',
       camera_id: cameraId,
@@ -787,178 +696,54 @@ function sendFrameToAI(frame, cameraId) {
       session_id: activeSessionId
     };
     
-    console.log(`[AI METADATA] Sending metadata:`, metadata);
-    
-    // First send the metadata as JSON
+    // Send metadata then binary frame
     clients.ai.send(JSON.stringify(metadata));
     
-    // Then send the actual binary frame directly
     setTimeout(() => {
       if (clients.ai && clients.ai.readyState === WebSocket.OPEN) {
-        console.log(`[AI BINARY] Sending binary frame data: ${frame.length} bytes`);
         clients.ai.send(frame, { binary: true }, (err) => {
           if (err) {
-            console.error(`[AI BINARY] Error sending binary frame to AI: ${err.message}`);
-            // Decrement the processing counter on error
+            console.error(`[AI BINARY] Error sending frame: ${err.message}`);
             objectDetection.processingCount = Math.max(0, objectDetection.processingCount - 1);
-          } else {
-            console.log(`[AI BINARY] Successfully sent binary frame to AI`);
           }
         });
       } else {
-        // Decrement the processing counter if connection closed while waiting
         objectDetection.processingCount = Math.max(0, objectDetection.processingCount - 1);
-        console.warn('[AI BINARY] AI connection lost while sending frame');
       }
     }, 5);
   } catch (error) {
-    console.error(`[AI FRAME] Error sending frame to AI: ${error.message}`);
-    // Decrement the processing counter on error
+    console.error(`[AI FRAME] Error: ${error.message}`);
     objectDetection.processingCount = Math.max(0, objectDetection.processingCount - 1);
   }
 }
 
 /**
- * Process AI detection response with comprehensive logging
- * @param {Object} message - Detection response from AI
- */
-async function processAIResponse(message) {
-  // Decrement the processing counter for completed detection
-  objectDetection.processingCount = Math.max(0, objectDetection.processingCount - 1);
-  
-  // Only process if there are results and we have an active session
-  if (!activeSessionId || !message || !message.results) {
-    console.warn('Received AI response but no active session or results');
-    return;
-  }
-  
-  const results = message.results;
-  const cameraId = message.camera_id;
-  const timestamp = new Date();
-  
-  if (!cameraId) {
-    console.warn('Received AI response without camera ID');
-    return;
-  }
-  
-  // Store detection results
-  objectDetection.detectionResults.set(cameraId, results);
-  
-  // Reset error counter on successful response
-  objectDetection.errorCount = 0;
-  
-  // Process detections to count objects by class
-  const detections = results.detections || [];
-  let carCount = 0;
-  let accidentCount = 0;
-  
-  detections.forEach(detection => {
-    if (detection.class_name === 'car') {
-      carCount++;
-    } else if (detection.class_name === 'accident') {
-      accidentCount++;
-    }
-  });
-  
-  // === COMPREHENSIVE LOGGING FOR EVERY AI CHECK ===
-  console.log('=== AI DETECTION COMPLETE ===');
-  console.log(`Timestamp: ${timestamp.toISOString()}`);
-  console.log(`Camera: ${cameraId}`);
-  console.log(`Session: ${activeSessionId}`);
-  console.log(`Processing Time: ${results.total_time?.toFixed(3)}s (inference: ${results.inference_time?.toFixed(3)}s)`);
-  console.log(`Image Size: ${results.image_size?.[1]}x${results.image_size?.[0]}`);
-  console.log(`Total Detections: ${detections.length}`);
-  console.log(`Cars Detected: ${carCount}`);
-  console.log(`Accidents Detected: ${accidentCount}`);
-  console.log(`Traffic Density: ${results.traffic_analysis?.density || 'unknown'}`);
-  
-  // Log individual detections
-  if (detections.length > 0) {
-    console.log('Individual Detections:');
-    detections.forEach((detection, index) => {
-      console.log(`  ${index + 1}. ${detection.class_name} (confidence: ${detection.confidence.toFixed(3)}, bbox: [${detection.bbox.map(b => b.toFixed(1)).join(', ')}])`);
-    });
-  } else {
-    console.log('No objects detected in this frame');
-  }
-  console.log('========================\n');
-  
-  // Store detection in session log for duplicate prevention and analysis
-  if (!objectDetection.detectionLog.has(activeSessionId)) {
-    objectDetection.detectionLog.set(activeSessionId, []);
-  }
-  
-  const sessionLog = objectDetection.detectionLog.get(activeSessionId);
-  const detectionEntry = {
-    timestamp,
-    cameraId,
-    detections,
-    carCount,
-    accidentCount,
-    processingTime: results.total_time,
-    inferenceTime: results.inference_time,
-    imageSize: results.image_size
-  };
-  
-  sessionLog.push(detectionEntry);
-  
-  // Keep only last 1000 detections per session to prevent memory issues
-  if (sessionLog.length > 1000) {
-    sessionLog.splice(0, sessionLog.length - 1000);
-  }
-  
-  // Create detection record for database
-  const detectionRecord = {
-    timestamp,
-    cameraId: cameraId,
-    detections: detections,
-    carCount,
-    accidentCount,
-    inference_time: results.inference_time || 0,
-    total_time: results.total_time || 0,
-    image_size: results.image_size || [0, 0],
-    sessionId: activeSessionId
-  };
-  
-  try {
-    // Always add the detection to the active session in MongoDB
-    await addDetectionToSession(activeSessionId, detectionRecord);
-    console.log(`Detection saved to database for session ${activeSessionId}`);
-    
-    // Broadcast detection results to browser clients
-    broadcastDetectionResults(cameraId, results);
-    
-    // Handle traffic redirection based on analysis
-    if (results.traffic_analysis) {
-      handleTrafficRedirection(cameraId, results.traffic_analysis);
-    }
-  } catch (error) {
-    console.error(`Error processing detection result: ${error.message}`);
-  }
-}
-
-/**
- * Broadcast detection results to all connected browser clients
+ * Broadcast detection results with bounding box coordinates to browsers
  * @param {string} cameraId - ID of the camera source
  * @param {Object} results - Detection results from the API
  */
 function broadcastDetectionResults(cameraId, results) {
   if (!results) return;
   
-  // Create a message to send to browsers
+  // Enhanced message with bounding box coordinates for frontend drawing
   const detectionMessage = {
     type: 'detection_results',
     cameraId,
-    detections: results.detections,
+    detections: results.detections.map(detection => ({
+      class_name: detection.class_name,
+      confidence: detection.confidence,
+      bbox: detection.bbox, // [x1, y1, x2, y2] coordinates
+      color: getDetectionColor(detection.class_name) // Helper for consistent colors
+    })),
+    image_size: results.image_size, // [height, width] for coordinate scaling
     inference_time: results.inference_time,
     timestamp: Date.now(),
-    sessionId: activeSessionId // Include the active session ID if there is one
+    sessionId: activeSessionId
   };
   
   // Send to all connected browsers
   for (const browser of clients.browsers) {
     if (browser.readyState === WebSocket.OPEN) {
-      // If browser is subscribed to a specific session, only send if it matches
       if (browser.sessionId && browser.sessionId !== activeSessionId) {
         continue;
       }
@@ -970,6 +755,24 @@ function broadcastDetectionResults(cameraId, results) {
       }
     }
   }
+}
+
+/**
+ * Get consistent color for detection class
+ * @param {string} className - Detection class name
+ * @returns {string} - Color code
+ */
+function getDetectionColor(className) {
+  const colorMap = {
+    'car': '#00ff00',        // Green
+    'truck': '#ffff00',      // Yellow
+    'bus': '#ff8000',        // Orange
+    'motorbike': '#ff0080',  // Pink
+    'bicycle': '#0080ff',    // Blue
+    'person': '#8000ff',     // Purple
+    'accident': '#ff0000'    // Red
+  };
+  return colorMap[className] || '#ffffff'; // Default white
 }
 
 // --- WebSocket Keepalive and Robustness Enhancements ---
@@ -1070,7 +873,6 @@ wss.on('connection', (ws, req) => {
         if (isJpegData(data)) {
           // If we know the camera ID, process the frame
           if (cameraId) {
-            console.log(`[CAMERA FRAME] Received JPEG frame from ${cameraId}: ${data.length} bytes`);
             processVideoFrame(data, cameraId);
           } else {
             console.warn("[CAMERA FRAME] Received JPEG frame but camera ID is not yet known");
@@ -1148,6 +950,7 @@ wss.on('connection', (ws, req) => {
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
+        console.log("received data from ai", data);
           if (data.type === 'detection_response') {
           console.log(`[AI RESPONSE] Received detection response from AI service`);
           processAIResponse(data);
@@ -1228,40 +1031,10 @@ wss.on('connection', (ws, req) => {
           sendCameraInfo(data.cameraId);
         }
         else if (data.type === 'subscribe_session' && data.sessionId) {
-          // Subscribe to a specific session
           ws.sessionId = data.sessionId;
           console.log(`Browser client subscribed to session: ${data.sessionId}`);
         }
-        else if (data.type === 'request_frame' && data.cameraId) {
-          // Send the requested camera's latest frame - only for testing or fallback
-          const cameraId = data.cameraId;
-          
-          if (streamSettings.latestFrames.has(cameraId)) {
-            const frame = streamSettings.latestFrames.get(cameraId);
-            
-            // Send metadata first
-            const metadata = JSON.stringify({
-              type: 'frame_metadata',
-              id: cameraId,
-              timestamp: Date.now(),
-              requested: true,
-              message: 'This is a fallback frame. For live streaming, connect directly to the camera stream URL.'
-            });
-            
-            ws.send(metadata);
-            
-            // Then send the frame
-            ws.send(frame, { binary: true });
-          } else {
-            ws.send(JSON.stringify({
-              type: 'error',
-              message: 'Frame not available. Please connect directly to camera stream.',
-              cameraId: data.cameraId,
-              timestamp: Date.now()
-            }));
-          }
-        }
-        // Add other browser commands as needed
+        // REMOVE request_frame handler - no longer needed
       } catch (error) {
         console.error(`Error processing browser message: ${error.message}`);
       }
