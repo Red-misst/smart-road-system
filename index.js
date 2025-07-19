@@ -1154,7 +1154,7 @@ server.on('error', (error) => {
 // ...existing code...
 
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, async () => {
   console.log(`[SERVER START] Server listening on port ${PORT}`);
   console.log(`[SERVER START] WebSocket server ready for connections`);
