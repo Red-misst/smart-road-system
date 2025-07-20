@@ -52,10 +52,10 @@ const objectDetection = {
   // Use environment-specific WebSocket URL for AI service
   apiEndpoint: isProduction 
     ? 'wss://smart-road-system.onrender.com/ai-ws' 
-    : 'ws://localhost:8000/ws',
+    : `ws://localhost:${process.env.PYTHON_API_PORT || 8000}/ws`,
   httpApiEndpoint: isProduction 
     ? 'https://smart-road-system.onrender.com/detect'
-    : 'http://localhost:8000/detect', // HTTP endpoint as backup
+    : `http://localhost:${process.env.PYTHON_API_PORT || 8000}/detect`, // HTTP endpoint as backup
   confidenceThreshold: 0.45, // Using default from Python AI configuration
   detectionInterval: 200, // ms between detections (limit to ~5 fps for AI to avoid overloading)
   lastDetectionTime: new Map(), // Track last detection time per camera
@@ -837,6 +837,31 @@ function sendFrameToAI(frame, cameraId) {
  * Process AI detection response with comprehensive logging
  * @param {Object} message - Detection response from AI
  */
+// SMS notification configuration
+const SMS_CONFIG = {
+  BASE_URL: 'https://api.textbee.dev/api/v1',
+  DEVICE_ID: process.env.TEXTBEE_DEVICE_ID,
+  API_KEY: process.env.TEXTBEE_API_KEY,
+  ACCIDENT_NUMBER: process.env.ACCIDENT_NOTIFY_NUMBER,
+  THRESHOLD_NUMBER: process.env.THRESHOLD_NOTIFY_NUMBER
+};
+
+async function sendSMSAlert(recipient, message) {
+  try {
+    const response = await axios.post(
+      `${SMS_CONFIG.BASE_URL}/gateway/devices/${SMS_CONFIG.DEVICE_ID}/send-sms`,
+      {
+        recipients: [recipient],
+        message: message
+      },
+      { headers: { 'x-api-key': SMS_CONFIG.API_KEY } }
+    );
+    console.log('[SMS ALERT] Successfully sent SMS:', response.data);
+  } catch (error) {
+    console.error('[SMS ALERT] Failed to send SMS:', error.message);
+  }
+}
+
 async function processAIResponse(message) {
   // Decrement the processing counter for completed detection
   objectDetection.processingCount = Math.max(0, objectDetection.processingCount - 1);
@@ -939,6 +964,29 @@ async function processAIResponse(message) {
     // Always add the detection to the active session in MongoDB
     await addDetectionToSession(activeSessionId, detectionRecord);
     console.log(`Detection saved to database for session ${activeSessionId}`);
+    
+    // Get session parameters for threshold checks
+    const session = await getSessionData(activeSessionId);
+    
+    // Check car count threshold
+    if (session && session.count > 0) {  // if count threshold was set
+      // Get all detections for this session
+      const allDetections = await getSessionDetections(activeSessionId, 1000, 0);
+      const totalCars = allDetections.reduce((sum, det) => sum + (det.carCount || 0), 0);
+      
+      if (totalCars >= session.count) {
+        // Send threshold alert SMS
+        const message = `ALERT: Traffic threshold exceeded at camera ${cameraId}. Current count: ${totalCars}, Threshold: ${session.count}`;
+        await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, message);
+      }
+    }
+    
+    // Check for accidents
+    if (accidentCount > 0) {
+      // Send accident alert SMS
+      const message = `URGENT: Accident detected at camera ${cameraId}! Time: ${new Date().toLocaleString()}`;
+      await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, message);
+    }
     
     // Broadcast detection results to browser clients
     broadcastDetectionResults(cameraId, results);
@@ -1407,9 +1455,10 @@ server.listen(PORT, async () => {
   objectDetection.rateLimit.lastResetTime = Date.now();
     // Function to check API health
   async function checkDetectionApiHealth() {
+     const apiPort = process.env.PYTHON_API_PORT || 8000;
      const healthUrl = isProduction 
     ? `https://${serverConfig.host}/health`
-    : `http://localhost:8000/health`;
+    :  `http://localhost:${apiPort}/health`;
     try {
       const response = await axios.get(healthUrl, { 
         timeout: 3000,
