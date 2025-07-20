@@ -7,7 +7,7 @@ const char* ssid = "Tenda_5C30C8";
 const char* password = "op898989..";
 
 // WebSocket server
-const char* ws_server_ip = "192.168.0.109";
+const char* ws_server_ip = "192.168.0.105";
 const uint16_t ws_server_port = 443;
 const char* ws_path = "/?type=camera";
 

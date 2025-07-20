@@ -220,49 +220,47 @@ async def listen_to_node():
             await asyncio.sleep(5)  # Wait before retry
 
 async def process_node_message(message):
-    """Process incoming messages from Node.js"""
+    """Process incoming messages from Node.js - optimized"""
     try:
-        # Check if this is binary data (likely a JPEG image)
-        if isinstance(message, bytes):
-            # Convert binary to base64 for processing
-            base64_image = base64.b64encode(message).decode('utf-8')
-            
-            # Process as an image (using default camera ID if not known)
-            result = await process_image(base64_image, 0.25, "unknown")
-            
-            # Send results back
-            await send_to_node({
-                "type": "detection_response",
-                "camera_id": "unknown",
-                "results": result
-            })
-            return
-        
-        # Try to parse as JSON if it's a string
         data = json.loads(message)
         
-        # Check message type
         if data.get("type") == "detection_request":
-            logger.info("Received detection request from Node.js")
+            camera_id = data.get("camera_id")
+            session_id = data.get("session_id")
+            confidence = data.get("confidence", 0.25)
+            timestamp = data.get("timestamp", time.time())
+            
             if "image" in data:
                 # Process image for detection
-                result = await process_image(data["image"], 
-                                           data.get("confidence", 0.25), 
-                                           data.get("camera_id"))
-                # Send results back
-                await send_to_node({
+                result = await process_image(
+                    data["image"], 
+                    confidence, 
+                    camera_id
+                )
+                
+                # Send optimized response (only essentials)
+                response = {
                     "type": "detection_response",
-                    "camera_id": data.get("camera_id"),
-                    "results": result
-                })
+                    "camera_id": camera_id,
+                    "session_id": session_id,
+                    "timestamp": timestamp,
+                    "results": {
+                        "detections": result["detections"],
+                        "inference_time": result["inference_time"],
+                        "total_time": result["total_time"],
+                        "image_size": result["image_size"]
+                    }
+                }
+                
+                await send_to_node(response)
+                
         elif data.get("type") == "ping":
-            # Respond to ping
             await send_to_node({"type": "pong", "timestamp": time.time()})
-    except json.JSONDecodeError:
-        # For non-JSON text data
-        logger.warning(f"Received non-JSON text message from Node.js: {message[:50]}...")
+            
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON from Node.js: {e}")
     except Exception as e:
-        logger.error(f"Error processing message from Node.js: {e}")
+        logger.error(f"Error processing Node.js message: {e}")
 
 # --- Lifespan context manager for startup/shutdown events ---
 @asynccontextmanager
