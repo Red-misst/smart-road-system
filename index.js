@@ -1435,6 +1435,7 @@ server.on('error', (error) => {
 
 // Start server
 const PORT = process.env.PORT || serverConfig.port || 3000;
+
 server.listen(PORT, async () => {
   console.log(`[SERVER START] Server listening on port ${PORT}`);
   console.log(`[SERVER START] WebSocket server ready for connections`);
@@ -1447,8 +1448,10 @@ server.listen(PORT, async () => {
   console.log(`[SYSTEM STATUS] Rate limit: ${objectDetection.rateLimit.maxRequestsPerMinute} req/min`);
   
   // Start Python detection API
-  console.log(`[STARTUP] Starting Python API...`);
-  startPythonAPI();
+    if (!isProduction) {
+    console.log(`[STARTUP] Starting Python API...`);
+    startPythonAPI();
+  }
   
   // Reset rate limit counters
   objectDetection.rateLimit.requestCounter = 0;
