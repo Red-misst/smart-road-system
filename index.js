@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import axios from 'axios';
+import dotenv from 'dotenv';
 import {
   createSession,
   endSession,
@@ -13,6 +14,8 @@ import {
   getSessionData,
   getSessionDetections
 } from './mongo.js';
+
+dotenv.config();
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -37,10 +40,22 @@ const streamSettings = {
 };
 
 // Object detection configuration - optimized for active sessions only
+const isProduction = process.env.NODE_ENV === 'production';
+const serverConfig = {
+  wsUrl: isProduction ? process.env.NODE_SERVER_URL_PRODUCTION : process.env.NODE_SERVER_URL_LOCAL,
+  host: isProduction ? process.env.NODE_SERVER_HOST_PRODUCTION : process.env.NODE_SERVER_HOST_LOCAL,
+  port: isProduction ? process.env.NODE_SERVER_PORT_PRODUCTION : process.env.NODE_SERVER_PORT_LOCAL
+};
+
 const objectDetection = {
   enabled: true,
-  apiEndpoint: 'ws://localhost:8000/ws', // Using WebSocket for better performance
-  httpApiEndpoint: 'http://localhost:8000/detect', // HTTP endpoint as backup
+  // Use environment-specific WebSocket URL for AI service
+  apiEndpoint: isProduction 
+    ? 'wss://smart-road-system.onrender.com/ai-ws' 
+    : 'ws://localhost:8000/ws',
+  httpApiEndpoint: isProduction 
+    ? 'https://smart-road-system.onrender.com/detect'
+    : 'http://localhost:8000/detect', // HTTP endpoint as backup
   confidenceThreshold: 0.45, // Using default from Python AI configuration
   detectionInterval: 200, // ms between detections (limit to ~5 fps for AI to avoid overloading)
   lastDetectionTime: new Map(), // Track last detection time per camera
@@ -1329,17 +1344,6 @@ wss.on('upgrade', (request, socket, head) => {
   }
 });
 
-// Check health of the object detection API
-async function checkDetectionApiHealth() {
-  try {
-    const response = await axios.get('http://localhost:8000/health', { timeout: 3000 });
-    console.log('Object detection API health check: ', response.data);
-    return true;
-  } catch (error) {
-    console.error(`Object detection API health check failed: ${error.message}`);
-    return false;
-  }
-}
 
 // Check AI service health and send ping
 function checkAIServiceHealth() {
@@ -1382,7 +1386,7 @@ server.on('error', (error) => {
 // ...existing code...
 
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || serverConfig.port || 3000;
 server.listen(PORT, async () => {
   console.log(`[SERVER START] Server listening on port ${PORT}`);
   console.log(`[SERVER START] WebSocket server ready for connections`);
@@ -1403,8 +1407,11 @@ server.listen(PORT, async () => {
   objectDetection.rateLimit.lastResetTime = Date.now();
     // Function to check API health
   async function checkDetectionApiHealth() {
+     const healthUrl = isProduction 
+    ? `https://${serverConfig.host}/health`
+    : `http://localhost:8000/health`;
     try {
-      const response = await axios.get('http://localhost:8000/health', { 
+      const response = await axios.get(healthUrl, { 
         timeout: 3000,
         validateStatus: () => true // Accept any status code
       });

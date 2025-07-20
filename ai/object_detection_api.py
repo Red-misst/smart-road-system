@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from ultralytics import YOLO
+from dotenv import load_dotenv
 
 # --- Models & Data Classes ---
 
@@ -60,7 +61,21 @@ traffic_classes = ['car', 'accident']  # Only track car and accident
 
 # WebSocket connection to Node.js server
 ws_connection = None
-node_server_url = "ws://localhost:3000/?type=ai"  # WebSocket URL for connecting to Node.js
+
+# Load environment variables
+load_dotenv()
+
+# Determine environment
+is_production = os.getenv("NODE_ENV") == "production"
+
+# Configure WebSocket connection based on environment
+if is_production:
+    node_server_url = os.getenv("NODE_SERVER_URL_PRODUCTION", "wss://smart-road-system.onrender.com") + "/?type=ai"
+else:
+    node_server_url = os.getenv("NODE_SERVER_URL_LOCAL", "ws://localhost:3000") + "/?type=ai"
+
+# For server port
+port = int(os.getenv("PORT", 8000))
 
 # --- Helper Functions ---
 
@@ -407,5 +422,6 @@ if __name__ == "__main__":
     # Get the model once at startup
     get_model()
     
-    # Start the FastAPI server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Start the FastAPI server with environment-specific host and port
+    host = "0.0.0.0"  # Always bind to all interfaces
+    uvicorn.run(app, host=host, port=port)

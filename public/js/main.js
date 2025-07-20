@@ -427,7 +427,9 @@ document.addEventListener("DOMContentLoaded", () => {
   
   // Function to check API status
   function checkApiStatus() {
-    fetch("http://localhost:8000/health")
+    const apiUrl = "/health"; 
+
+    fetch(apiUrl)
       .then((response) => response.json())
       .then((data) => {
         if (data.status === "healthy" && data.model_loaded) {
