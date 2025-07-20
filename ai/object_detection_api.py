@@ -60,7 +60,7 @@ traffic_classes = ['car', 'accident']  # Only track car and accident
 
 # WebSocket connection to Node.js server
 ws_connection = None
-node_server_url = "ws://localhost:3000/ai"  # WebSocket URL for connecting to Node.js
+node_server_url = "ws://localhost:3000/?type=ai"  # WebSocket URL for connecting to Node.js
 
 # --- Helper Functions ---
 

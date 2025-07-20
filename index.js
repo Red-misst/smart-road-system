@@ -1070,7 +1070,7 @@ wss.on('connection', (ws, req) => {
         if (isJpegData(data)) {
           // If we know the camera ID, process the frame
           if (cameraId) {
-            console.log(`[CAMERA FRAME] Received JPEG frame from ${cameraId}: ${data.length} bytes`);
+            
             processVideoFrame(data, cameraId);
           } else {
             console.warn("[CAMERA FRAME] Received JPEG frame but camera ID is not yet known");
@@ -1357,7 +1357,8 @@ function checkAIServiceHealth() {
   // Reset processing count if it seems stuck
   if (objectDetection.processingCount > 0) {
     const now = Date.now();
-    const lastDetectionTime = Math.max(...Array.from(objectDetection.lastDetectionTime.values(), 0));
+    const detectionTimes = Array.from(objectDetection.lastDetectionTime.values());
+    const lastDetectionTime = detectionTimes.length > 0 ? Math.max(...detectionTimes) : 0;
     
     // If no detections for over 30 seconds but processingCount > 0, reset it
     if (now - lastDetectionTime > 30000) {
