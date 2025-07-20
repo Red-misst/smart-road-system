@@ -58,6 +58,86 @@
             50% { transform: scale(1.2); opacity: 0.7; }
             100% { transform: scale(1); opacity: 1; }
         }
+        
+        /* Fullscreen session history */
+        .session-history-section.fullscreen-mode {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            max-width: none;
+            height: 100vh;
+            z-index: 50;
+            border-radius: 0;
+            margin: 0;
+            overflow-y: auto;
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+        }
+        
+        .session-history-section.fullscreen-mode .history-main-content {
+            flex: 1;
+        }
+        
+        .session-history-section.fullscreen-mode #session-data {
+            max-height: calc(100vh - 170px);
+            height: calc(100vh - 170px);
+        }
+        
+        .session-history-section.fullscreen-mode .history-sidebar {
+            width: 300px;
+            min-width: 300px;
+        }
+        
+        .session-history-section.fullscreen-mode #sessions-list {
+            max-height: calc(100vh - 170px);
+        }
+        
+        /* Enhanced professional styling */
+        .bg-gradient-blue {
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        }
+        
+        .bg-gradient-green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        .card-hover {
+            transition: all 0.2s ease;
+        }
+        
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        
+        /* Responsive improvements */
+        @media (max-width: 768px) {
+            .session-history-section.fullscreen-mode {
+                padding: 1rem;
+            }
+            
+            .session-history-section.fullscreen-mode .flex-col.lg\\:flex-row {
+                flex-direction: column !important;
+            }
+            
+            .session-history-section.fullscreen-mode .history-sidebar {
+                width: 100%;
+                min-width: 100%;
+                margin-bottom: 1rem;
+            }
+            
+            .session-history-section.fullscreen-mode #sessions-list {
+                max-height: 180px;
+            }
+            
+            .session-history-section.fullscreen-mode #session-data {
+                max-height: calc(100vh - 350px);
+                height: calc(100vh - 350px);
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-light min-h-screen flex flex-col antialiased">
@@ -153,13 +233,27 @@
         </section>
         
         <!-- Session History -->
-        <section class="w-full max-w-2xl bg-white rounded-lg shadow-md p-6 flex flex-col gap-4 border border-gray-200">
-            <h3 class="text-lg font-semibold text-gray-800 flex items-center">
-                <span class="material-icons mr-1 text-primary">history</span>
-                Analysis Session History
+        <section class="session-history-section w-full max-w-4xl bg-white rounded-lg shadow-md p-6 flex flex-col gap-4 border border-gray-200 transition-all duration-300">
+            <h3 class="text-lg font-semibold text-gray-800 flex items-center justify-between">
+                <div class="flex items-center">
+                    <span class="material-icons mr-1 text-primary">history</span>
+                    Analysis Session History
+                </div>
             </h3>
-            <div id="sessions-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto"></div>
-            <div id="session-data" class="mt-4 bg-gray-50 p-4 rounded border border-gray-200 max-h-80 overflow-y-auto"></div>
+            
+            <div class="flex flex-col lg:flex-row gap-4">
+                <!-- Sessions List -->
+                <div class="history-sidebar lg:w-1/4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Previous Sessions</h4>
+                    <div id="sessions-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto border border-gray-200 rounded p-2"></div>
+                </div>
+                
+                <!-- Session Data with Charts -->
+                <div class="history-main-content lg:w-3/4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Session Analytics</h4>
+                    <div id="session-data" class="bg-gray-50 p-4 rounded border border-gray-200 max-h-[520px] overflow-y-auto"></div>
+                </div>
+            </div>
         </section>
     </main>
     
@@ -182,7 +276,10 @@
     </div>
     
     <!-- Include our modular JavaScript -->
-    <script type="module" src="../public/js/admin.js"></script>
+    <script type="module" src="js/admin.js"></script>
+    
+    <!-- Chart.js Datalabels plugin for better chart annotations -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 
     <!-- Add API status check script -->
     <script>
