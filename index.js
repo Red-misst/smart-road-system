@@ -1074,7 +1074,7 @@ wss.on('connection', (ws, req) => {
             processVideoFrame(data, cameraId);
           } else {
             console.warn("[CAMERA FRAME] Received JPEG frame but camera ID is not yet known");
-          }
+          } 
           return;
         }
         
