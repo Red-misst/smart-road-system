@@ -59,7 +59,7 @@ model_path = "custom.pt"  # Use custom model
 class_names = ["car", "accident"]  # Will be populated from model
 traffic_classes = ['car', 'accident']  # Only track car and accident
 
-# WebSocket connection to Node.js server
+# WebSocket connection to Node.js server 
 ws_connection = None
 
 # Load environment variables
