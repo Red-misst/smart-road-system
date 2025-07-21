@@ -112,15 +112,9 @@
               <span class="material-icons text-sm mr-1"
                 >admin_panel_settings</span
               >
-              <span>Admin</span>
+              <span>Admin Panel</span>
             </a>
-            <button
-              id="camera-toggle"
-              class="bg-primary hover:bg-primary-dark text-white px-3 py-1 rounded-md text-sm flex items-center"
-            >
-              <span class="material-icons text-sm mr-1">videocam</span>
-              <span>Connect Camera</span>
-            </button>
+           
           </div>
         </div>
       </div>
@@ -146,57 +140,6 @@
         >
           Traffic Analysis Dashboard
         </h2>
-
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-2 gap-4 mb-6">
-          <div
-            class="bg-surface rounded-md p-4 shadow-sm border border-gray-200"
-          >
-            <div class="flex items-center text-gray-500 text-sm mb-1">
-              <span class="material-icons text-sm mr-1">route</span>
-              <span>Intersections</span>
-            </div>
-            <p
-              id="intersections-count"
-              class="text-gray-800 text-2xl font-semibold"
-            >
-              0
-            </p>
-          </div>
-          <div
-            class="bg-surface rounded-md p-4 shadow-sm border border-gray-200"
-          >
-            <div class="flex items-center text-gray-500 text-sm mb-1">
-              <span class="material-icons text-sm mr-1">videocam</span>
-              <span>Cameras</span>
-            </div>
-            <p id="cameras-count" class="text-gray-800 text-2xl font-semibold">
-              0
-            </p>
-          </div>
-          <div
-            class="bg-surface rounded-md p-4 shadow-sm border border-gray-200"
-          >
-            <div class="flex items-center text-gray-500 text-sm mb-1">
-              <span class="material-icons text-sm mr-1">warning</span>
-              <span>Congested</span>
-            </div>
-            <p id="congested-count" class="text-danger text-2xl font-semibold">
-              0
-            </p>
-          </div>
-          <div
-            class="bg-surface rounded-md p-4 shadow-sm border border-gray-200"
-          >
-            <div class="flex items-center text-gray-500 text-sm mb-1">
-              <span class="material-icons text-sm mr-1">notifications</span>
-              <span>Alerts</span>
-            </div>
-            <p id="alerts-count" class="text-warning text-2xl font-semibold">
-              0
-            </p>
-          </div>
-        </div>
 
         <!-- Traffic Status Summary -->
         <div
@@ -253,6 +196,70 @@
             </div>
           </div>
         </div>
+        <!-- Route Planner Panel (moved to sidebar) -->
+        <div
+          id="route-planner-panel"
+          class="hidden bg-white p-3 border-t border-gray-200 mt-6"
+        >
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-gray-700 font-semibold flex items-center">
+              <span class="material-icons text-primary mr-1">directions</span>
+              <span>Route Planner</span>
+            </h3>
+            <button
+              id="close-route-planner"
+              class="text-gray-500 hover:text-gray-700"
+            >
+              <span class="material-icons">close</span>
+            </button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-gray-600 text-sm mb-1"
+                >Starting Point</label
+              >
+              <div class="flex">
+               
+                <button
+                  id="pick-start-point"
+                  class="bg-gray-100 border border-l-0 border-gray-300 rounded-r px-3 py-2 hover:bg-gray-200"
+                >
+                  <span class="material-icons text-gray-600 text-sm"
+                    >place</span
+                  >
+                  <span class="text-gray-600 text-sm">Start</span>
+                </button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-gray-600 text-sm mb-1"
+                >Destination</label
+              >
+              <div class="flex">
+             
+                <button
+                  id="pick-end-point"
+                  class="bg-gray-100 border border-l-0 border-gray-300 rounded-r px-3 py-2 hover:bg-gray-200"
+                >
+  
+                  <span class="material-icons text-gray-600 text-sm"
+                    >place</span
+                  >
+                  <span class="text-gray-600 text-sm">Destination</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button
+              id="calculate-route-btn"
+              class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded shadow-sm flex items-center text-sm"
+            >
+              <span class="material-icons text-sm mr-1">navigation</span> Find
+              Route
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Map & Cameras Section -->
@@ -269,12 +276,7 @@
               <span class="material-icons text-sm mr-1">fullscreen</span> Full
               View
             </button>
-            <button
-              id="show-cameras-btn"
-              class="bg-gray-100 text-gray-700 px-3 py-2 rounded shadow-sm hover:bg-gray-200 transition-colors flex items-center text-sm"
-            >
-              <span class="material-icons text-sm mr-1">videocam</span> Cameras
-            </button>
+         
             <button
               id="show-routes-btn"
               class="bg-gray-100 text-gray-700 px-3 py-2 rounded shadow-sm hover:bg-gray-200 transition-colors flex items-center text-sm"
@@ -299,34 +301,8 @@
         <!-- Map Container -->
         <div id="map" class="flex-1 bg-white border border-gray-200"></div>
 
-        <!-- Live Cameras Section -->
-        <div id="cameras-section" class="bg-white p-4 border-t border-gray-200">
-          <div class="flex justify-between items-center mb-3">
-            <h3 class="text-gray-700 font-semibold flex items-center">
-              <span class="material-icons text-primary mr-1">videocam</span>
-              <span>Live Traffic Feeds</span>
-            </h3>
-            <div class="flex items-center">
-              <span id="camera-status" class="text-gray-500 text-sm mr-3"
-                >No cameras connected</span
-              >
-              <button
-                id="close-cameras"
-                class="text-gray-500 hover:text-gray-700"
-              >
-                <span class="material-icons">close</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Camera Grid -->
-          <div
-            id="camera-feeds"
-            class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
-          >
-            <!-- Camera feeds will be added dynamically -->
-          </div>
-        </div>
+     
+       
 
         <!-- Selected Intersection Detail (hidden by default) -->
         <div
@@ -410,80 +386,6 @@
         </div>
 
         <!-- Add Route Planner Panel (hidden by default) -->
-        <div
-          id="route-planner-panel"
-          class="hidden bg-white p-3 border-t border-gray-200"
-        >
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="text-gray-700 font-semibold flex items-center">
-              <span class="material-icons text-primary mr-1">directions</span>
-              <span>Route Planner</span>
-            </h3>
-            <button
-              id="close-route-planner"
-              class="text-gray-500 hover:text-gray-700"
-            >
-              <span class="material-icons">close</span>
-            </button>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label class="block text-gray-600 text-sm mb-1"
-                >Starting Point</label
-              >
-              <div class="flex">
-                <select
-                title="Select starting point"
-                  id="start-point"
-                  class="flex-1 border border-gray-300 rounded-l px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                >
-                  <option value="">Select location or click on map</option>
-                  <!-- Options will be populated dynamically -->
-                </select>
-                <button
-                  id="pick-start-point"
-                  class="bg-gray-100 border border-l-0 border-gray-300 rounded-r px-3 py-2 hover:bg-gray-200"
-                >
-                  <span class="material-icons text-gray-600 text-sm"
-                    >place</span
-                  >
-                </button>
-              </div>
-            </div>
-            <div>
-              <label class="block text-gray-600 text-sm mb-1"
-                >Destination</label
-              >
-              <div class="flex">
-                <select
-                    title="Select destination point"
-                  id="end-point"
-                  class="flex-1 border border-gray-300 rounded-l px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary text-sm"
-                >
-                  <option value="">Select location or click on map</option>
-                  <!-- Options will be populated dynamically -->
-                </select>
-                <button
-                  id="pick-end-point"
-                  class="bg-gray-100 border border-l-0 border-gray-300 rounded-r px-3 py-2 hover:bg-gray-200"
-                >
-                  <span class="material-icons text-gray-600 text-sm"
-                    >place</span
-                  >
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="flex justify-end mt-3">
-            <button
-              id="calculate-route-btn"
-              class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded shadow-sm flex items-center text-sm"
-            >
-              <span class="material-icons text-sm mr-1">navigation</span> Find
-              Route
-            </button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -818,9 +720,6 @@
           .getElementById("map-fullscreen-btn")
           .addEventListener("click", toggleFullscreen);
         document
-          .getElementById("show-cameras-btn")
-          .addEventListener("click", toggleCamerasSection);
-        document
           .getElementById("show-routes-btn")
           .addEventListener("click", toggleRouteLines);
         document
@@ -1090,16 +989,12 @@
           addIntersectionMarker(intersection);
         });
 
-        // Update counts
-        document.getElementById("intersections-count").textContent =
-          intersections.length;
-        document.getElementById("cameras-count").textContent =
-          intersections.length;
+
 
         const congestedCount = intersections.filter(
           (i) => i.status === "red"
         ).length;
-        document.getElementById("congested-count").textContent = congestedCount;
+        
       }
 
       function addIntersectionMarker(intersection) {

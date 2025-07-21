@@ -339,7 +339,11 @@ const ui = {
             }
             app.videoFrames.get(cameraId).push(Date.now());
             
-            // We no longer draw detection boxes directly on stream for smoother experience
+            // Draw detection boxes if we have detections for this camera
+            const detectionData = app.detections.get(cameraId);
+            if (detectionData && detectionData.detections) {
+                this.drawDetectionBoxes(cameraId, detectionData.detections);
+            }
             
             // Request next frame
             this.requestVideoFrame(cameraId);
@@ -383,8 +387,10 @@ const ui = {
             detectionCount.textContent = data.detections ? data.detections.length : 0;
         }
 
-        // We store detection data but don't draw boxes directly on the video stream
-        // for a smoother streaming experience
+        // Update detection overlay directly on canvas
+        if (data.detections && data.detections.length > 0) {
+            this.drawDetectionBoxes(data.cameraId, data.detections);
+        }
     },
 
     drawDetectionBoxes(cameraId, detections) {
@@ -623,43 +629,70 @@ function setupUIEventListeners() {
 }
 
 function initializeMap() {
-  // Default location (Nairobi, Kenya)
   const defaultLocation = [-1.2921, 36.8219];
-  
+
   // Create Leaflet map
   map = L.map("map", {
     zoomControl: false,
     attributionControl: false
   }).setView(defaultLocation, 15);
 
-  // Add tile layer
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  // Use a dark-themed tile layer (Carto Dark Matter as base)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
     maxZoom: 19
   }).addTo(map);
-  
-  // Initialize path
-  path = L.polyline([], { color: 'red', weight: 4 }).addTo(map);
 
-  // Add map style customization
+  // Neon green route line
+  path = L.polyline([], {
+    color: '#39ff14',  // neon green
+    weight: 5,
+    opacity: 0.9
+  }).addTo(map);
+
+  // Add futuristic styles
   const mapStyleElement = document.createElement('style');
   mapStyleElement.textContent = `
-.leaflet-container {
-  background-color: #e8eef1;       /* soft blue-gray */
-  border: 2px solid #b0c4d1;       /* muted border */
-  border-radius: 12px;             /* rounded corners */
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* subtle shadow */
-  padding: 8px;                    /* internal spacing */
-  outline: none;                   /* remove focus outline */
-}
+    .leaflet-container {
+      background-color: #0d0d0d; /* deep dark background */
+      border: 2px solid #00ff99;
+      border-radius: 12px;
+      box-shadow: 0 0 20px #00ffcc;
+      color: #00ffcc;
+    }
 
     .leaflet-tile-pane {
-      filter: saturate(1.1) contrast(1.05);
+      filter: saturate(1.5) contrast(1.3) brightness(0.9);
     }
+
+    .leaflet-control-zoom a {
+      background-color: #1f1f1f;
+      color: #00ffcc;
+      border: 1px solid #00ffcc;
+    }
+
+    .leaflet-control-zoom a:hover {
+      background-color: #00ffcc;
+      color: #000;
+    }
+
+    #map-coordinates {
+      font-family: "Courier New", monospace;
+      color: #00ffcc;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 6px;
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      z-index: 999;
+    }
+
     .route-path-animation {
-      stroke-dasharray: 8, 12;
-      animation: dash 30s linear infinite;
+      stroke-dasharray: 6, 12;
+      animation: dash 20s linear infinite;
     }
+
     @keyframes dash {
       to {
         stroke-dashoffset: -1000;
@@ -668,39 +701,25 @@ function initializeMap() {
   `;
   document.head.appendChild(mapStyleElement);
 
-  // Add zoom control to top-right
-  L.control.zoom({
-    position: "topright"
-  }).addTo(map);
+  // Controls
+  L.control.zoom({ position: "topright" }).addTo(map);
+  L.control.attribution({ position: "bottomright", prefix: false }).addTo(map);
 
-  // Add attribution to bottom-right
-  L.control.attribution({
-    position: "bottomright",
-    prefix: false
-  }).addTo(map);
-
-  // Update coordinates display
+  // Display coordinates
   map.on("mousemove", (e) => {
     document.getElementById("map-coordinates").innerText = 
       `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(6)}`;
   });
 
-  // Setup map-related event listeners
+  // Map hooks
   setupMapEventListeners();
-
-  // Add sample intersections
   addSampleIntersections();
-
-  // Add route lines
   addRouteLines();
-
-  // Fix map display
   fixMapDisplay();
 }
 
 function setupMapEventListeners() {
   document.getElementById("map-fullscreen-btn").addEventListener("click", toggleFullscreen);
-  document.getElementById("show-cameras-btn").addEventListener("click", toggleCamerasSection);
   document.getElementById("show-routes-btn").addEventListener("click", toggleRouteLines);
   document.getElementById("toggle-route-planner-btn").addEventListener("click", toggleRoutePlanner);
   document.getElementById("close-route-planner").addEventListener("click", () => {
@@ -951,11 +970,10 @@ function addSampleIntersections() {
   });
 
   // Update counts
-  document.getElementById("intersections-count").textContent = intersections.length;
   document.getElementById("cameras-count").textContent = intersections.length;
 
   const congestedCount = intersections.filter((i) => i.status === "red").length;
-  document.getElementById("congested-count").textContent = congestedCount;
+ 
 }
 
 function addIntersectionMarker(intersection) {
@@ -1113,16 +1131,6 @@ function toggleFullscreen() {
   }, 100);
 }
 
-function toggleCamerasSection() {
-  const camerasSection = document.getElementById("cameras-section");
-  const isHidden = camerasSection.classList.contains("hidden");
-
-  if (isHidden) {
-    camerasSection.classList.remove("hidden");
-  } else {
-    camerasSection.classList.add("hidden");
-  }
-}
 
 function showIntersectionDetails(intersectionId) {
   const intersection = intersections.find((i) => i.id === intersectionId);
