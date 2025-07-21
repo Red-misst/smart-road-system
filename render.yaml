@@ -1,0 +1,59 @@
+services:
+  # Main Node.js server service
+  - type: web
+    name: smart-road-node-server
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_API_PORT
+        value: 8080
+      - key: NODE_SERVER_PORT_PRODUCTION
+        value: 3000
+      - key: NODE_SERVER_HOST_PRODUCTION
+        value: 0.0.0.0
+      - key: NODE_SERVER_URL_PRODUCTION
+        value: wss://smart-road-system.onrender.com
+      - key: PYTHON_API_URL_PRODUCTION
+        value: wss://smart-road-ai-api.onrender.com/ws
+      - key: PYTHON_API_HTTP_PRODUCTION
+        value: https://smart-road-ai-api.onrender.com
+      - key: MONGO_URI
+        fromDatabase:
+          name: smart-road-db
+          property: connectionString
+      - key: DB_NAME
+        value: smart-road
+      - key: TEXTBEE_DEVICE_ID
+        sync: false
+      - key: TEXTBEE_API_KEY
+        sync: false
+      - key: ACCIDENT_NOTIFY_NUMBER
+        sync: false
+      - key: THRESHOLD_NOTIFY_NUMBER
+        sync: false
+    healthCheckPath: /health
+
+  # Python AI API service
+  - type: web
+    name: smart-road-ai-api
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python ai/object_detection_api.py
+    envVars:
+      - key: PYTHON_API_PORT
+        value: 8080
+      - key: NODE_ENV
+        value: production
+      - key: NODE_SERVER_PORT_LOCAL
+        value: 3000
+    healthCheckPath: /health
+
+databases:
+  - name: smart-road-db
+    databaseName: smart-road
+    user: smart-road-user
