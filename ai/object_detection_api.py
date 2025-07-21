@@ -24,6 +24,173 @@ from pydantic import BaseModel
 from ultralytics import YOLO
 from dotenv import load_dotenv
 
+# --- Object Tracking for Duplicate Prevention ---
+
+class ObjectTracker:
+    """
+    Tracks objects across frames to prevent duplicate counting.
+    Uses IoU (Intersection over Union) to associate detections across frames.
+    """
+    def __init__(self, iou_threshold=0.3, max_age=30, min_hits=3):
+        self.next_id = 1
+        self.tracked_objects = {}  # id -> object info
+        self.object_history = {}   # id -> historical positions
+        self.iou_threshold = iou_threshold
+        self.max_age = max_age     # Max frames to keep without matching
+        self.min_hits = min_hits   # Min detections to confirm as real object
+        self.counted_objects = {}  # Objects already counted for statistics
+        self.last_cleanup = time.time()
+        self.cleanup_interval = 60  # Cleanup old objects every 60 seconds
+
+    def cleanup_old_objects(self, force=False):
+        """Remove old objects that haven't been seen for a while"""
+        now = time.time()
+        if not force and now - self.last_cleanup < self.cleanup_interval:
+            return
+            
+        self.last_cleanup = now
+        current_frame_id = max([obj.get('last_frame', 0) for obj in self.tracked_objects.values()]) if self.tracked_objects else 0
+        
+        # Remove objects that haven't been seen for max_age frames
+        ids_to_remove = []
+        for obj_id, obj in self.tracked_objects.items():
+            if current_frame_id - obj.get('last_frame', 0) > self.max_age:
+                ids_to_remove.append(obj_id)
+                
+        for obj_id in ids_to_remove:
+            del self.tracked_objects[obj_id]
+            if obj_id in self.object_history:
+                del self.object_history[obj_id]
+
+    def calculate_iou(self, box1, box2):
+        """Calculate IoU between two bounding boxes [x1, y1, x2, y2]"""
+        # Calculate intersection area
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        
+        if x2 < x1 or y2 < y1:
+            return 0.0
+            
+        intersection_area = (x2 - x1) * (y2 - y1)
+        
+        # Calculate union area
+        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union_area = box1_area + box2_area - intersection_area
+        
+        if union_area == 0:
+            return 0.0
+            
+        return intersection_area / union_area
+
+    def update(self, detections, frame_id, image_shape):
+        """
+        Update tracked objects with new detections.
+        Returns filtered detections with tracking IDs.
+        """
+        # Denormalize bounding boxes if they're normalized
+        h, w = image_shape[:2]
+        for det in detections:
+            if max(det["bbox"]) <= 1.0:  # If normalized
+                x1, y1, x2, y2 = det["bbox"]
+                det["bbox"] = [x1 * w, y1 * h, x2 * w, y2 * h]
+        
+        # Match new detections to existing objects using IoU
+        matched_indices = []
+        unmatched_detections = []
+        
+        # For each detection, find best matching tracked object
+        for det_idx, detection in enumerate(detections):
+            best_iou = self.iou_threshold
+            best_match = None
+            
+            for obj_id, tracked_obj in self.tracked_objects.items():
+                if tracked_obj['class_name'] != detection['class_name']:
+                    continue  # Only match same class
+                    
+                iou = self.calculate_iou(tracked_obj['bbox'], detection['bbox'])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match = obj_id
+                    
+            if best_match is not None:
+                # Update existing object
+                self.tracked_objects[best_match]['bbox'] = detection['bbox']
+                self.tracked_objects[best_match]['confidence'] = detection['confidence']
+                self.tracked_objects[best_match]['last_frame'] = frame_id
+                self.tracked_objects[best_match]['hits'] += 1
+                
+                # Update object history
+                if best_match not in self.object_history:
+                    self.object_history[best_match] = []
+                self.object_history[best_match].append(detection['bbox'])
+                
+                # Add tracking ID to detection
+                detection['tracking_id'] = best_match
+                matched_indices.append(det_idx)
+            else:
+                unmatched_detections.append(det_idx)
+                
+        # Create new tracked objects for unmatched detections
+        for det_idx in unmatched_detections:
+            detection = detections[det_idx]
+            new_id = self.next_id
+            self.next_id += 1
+            
+            self.tracked_objects[new_id] = {
+                'bbox': detection['bbox'],
+                'class_name': detection['class_name'],
+                'confidence': detection['confidence'],
+                'first_frame': frame_id,
+                'last_frame': frame_id,
+                'hits': 1
+            }
+            
+            # Initialize history for the new object
+            self.object_history[new_id] = [detection['bbox']]
+            
+            # Add tracking ID to detection
+            detection['tracking_id'] = new_id
+            
+        # Clean up old objects periodically
+        self.cleanup_old_objects()
+            
+        # Return filtered detections (only those with min_hits to avoid false positives)
+        filtered_detections = []
+        for det in detections:
+            obj_id = det.get('tracking_id')
+            if obj_id and self.tracked_objects[obj_id]['hits'] >= self.min_hits:
+                # Mark this object as counted for statistics
+                if obj_id not in self.counted_objects:
+                    self.counted_objects[obj_id] = {
+                        'class_name': det['class_name'],
+                        'first_seen': time.time()
+                    }
+                filtered_detections.append(det)
+                
+        return filtered_detections
+    
+    def get_statistics(self):
+        """Get statistics about counted objects"""
+        # Count by class
+        counts = {}
+        for obj_id, obj_info in self.counted_objects.items():
+            class_name = obj_info['class_name']
+            if class_name not in counts:
+                counts[class_name] = 0
+            counts[class_name] += 1
+            
+        return {
+            'total_objects': len(self.counted_objects),
+            'counts_by_type': counts,
+            'active_tracks': len(self.tracked_objects)
+        }
+
+# Create a global tracker instance for each camera
+camera_trackers = {}
+
 # --- Models & Data Classes ---
 
 class DetectionRequest(BaseModel):
@@ -112,6 +279,13 @@ async def process_image(image_data, confidence_threshold=0.01, camera_id=None):
     from base64 import b64decode, b64encode
     start_time = time.time()
     model = get_model()
+    
+    # Get or create tracker for this camera
+    global camera_trackers
+    if camera_id not in camera_trackers:
+        camera_trackers[camera_id] = ObjectTracker()
+    tracker = camera_trackers[camera_id]
+    
     # Perform detection with specified confidence
     
     # Decode base64 image
@@ -135,7 +309,9 @@ async def process_image(image_data, confidence_threshold=0.01, camera_id=None):
     except Exception as e:
         logger.error(f"Error running YOLO model: {e}")
         raise
-    detections = []
+        
+    # Process raw detections
+    raw_detections = []
     for r in results:
         for box in r.boxes:
             class_id = int(box.cls[0])
@@ -145,23 +321,44 @@ async def process_image(image_data, confidence_threshold=0.01, camera_id=None):
             conf = float(box.conf[0])
             x1, y1, x2, y2 = map(float, box.xyxy[0])
             h, w = frame.shape[:2]
-            bbox = [x1 / w, y1 / h, x2 / w, y2 / h]
-            detections.append({
+            bbox = [x1, y1, x2, y2]  # Use absolute coordinates for tracking
+            raw_detections.append({
                 "class_id": class_id,
                 "class_name": class_name,
                 "confidence": conf,
                 "bbox": bbox
             })
-            # Draw bounding box
-            color = (0, 255, 0) if class_name == 'car' else (0, 0, 255)
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-            label = f"{class_name}: {conf:.2f}"
-            cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    
+    # Update tracker with new detections
+    frame_id = int(time.time() * 1000)  # Use timestamp as frame ID
+    filtered_detections = tracker.update(raw_detections, frame_id, frame.shape)
+    
+    # Draw bounding boxes on frame
+    for det in filtered_detections:
+        x1, y1, x2, y2 = map(int, det["bbox"])
+        class_name = det["class_name"]
+        conf = det["confidence"]
+        tracking_id = det.get("tracking_id", "?")
+        
+        # Draw bounding box
+        color = (0, 255, 0) if class_name == 'car' else (0, 0, 255)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+        
+        # Draw label with tracking ID
+        label = f"{class_name}-{tracking_id}: {conf:.2f}"
+        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-    # Log summary counts
-    from collections import Counter
-    counts = Counter([det['class_name'] for det in detections])
-    logger.info(f"Detection counts: {dict(counts)}")
+    # Get statistics from tracker
+    stats = tracker.get_statistics()
+    
+    # Normalize bounding boxes for output
+    h, w = frame.shape[:2]
+    for det in filtered_detections:
+        x1, y1, x2, y2 = det["bbox"]
+        det["bbox"] = [x1/w, y1/h, x2/w, y2/h]  # Normalize for output
+
+    # Log unique object counts instead of per-frame counts
+    logger.info(f"Camera {camera_id} - Unique objects: {stats}")
 
     # Encode annotated frame back to base64
     try:
@@ -171,14 +368,33 @@ async def process_image(image_data, confidence_threshold=0.01, camera_id=None):
         logger.error(f"Error encoding annotated image: {e}")
         annotated_image = None
     end_time = time.time()
+    
+    # Add traffic analysis results
+    vehicle_count = stats['counts_by_type'].get('car', 0)
+    accident_count = stats['counts_by_type'].get('accident', 0)
+    
+    # Determine traffic density based on vehicle count
+    density = "low"
+    if vehicle_count > 10:
+        density = "high"
+    elif vehicle_count > 5:
+        density = "moderate"
+        
+    traffic_analysis = {
+        "vehicle_count": vehicle_count,
+        "accident_count": accident_count,
+        "density": density,
+        "counts_by_type": stats['counts_by_type']
+    }
 
     return {
-        "detections": detections,
+        "detections": filtered_detections,
         "inference_time": end_time - start_time,
         "total_time": end_time - start_time,
         "timestamp": end_time,
         "image_size": [frame.shape[0], frame.shape[1]],
-        "annotated_image": annotated_image
+        "annotated_image": annotated_image,
+        "traffic_analysis": traffic_analysis
     }
 
 async def send_to_node(data):
@@ -279,6 +495,21 @@ async def process_node_message(message):
     except Exception as e:
         logger.error(f"Error processing message from Node.js: {e}")
 
+# Periodically clean up old trackers
+async def cleanup_trackers():
+    """Clean up old trackers that haven't been used in a while"""
+    while True:
+        await asyncio.sleep(300)  # Run every 5 minutes
+        logger.info(f"Cleaning up trackers. Active cameras: {len(camera_trackers)}")
+        
+        for camera_id, tracker in list(camera_trackers.items()):
+            tracker.cleanup_old_objects(force=True)
+            
+            # If no objects are being tracked, remove the tracker
+            if len(tracker.tracked_objects) == 0:
+                del camera_trackers[camera_id]
+                logger.info(f"Removed inactive tracker for camera {camera_id}")
+
 # --- Lifespan context manager for startup/shutdown events ---
 @asynccontextmanager
 async def lifespan(app):
@@ -287,6 +518,9 @@ async def lifespan(app):
     
     # Start background task to connect and listen to Node.js server
     asyncio.create_task(listen_to_node())
+    
+    # Start background task to clean up trackers
+    asyncio.create_task(cleanup_trackers())
     
     yield
     

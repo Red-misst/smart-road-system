@@ -9,7 +9,9 @@ const app = {
     map: null,
     cameras: new Map(),
     detections: new Map(),
-    currentSession: null
+    currentSession: null,
+    videoFrames: new Map(), // Store latest video frames
+    canvasContexts: new Map() // Store canvas contexts for drawing
 };
 
 // WebSocket connection management
@@ -51,6 +53,9 @@ const websocket = {
                 ui.updateConnectionStatus(false);
             };
             
+            // Set binary type to arraybuffer for handling binary frames
+            this.connection.binaryType = 'arraybuffer';
+            
         } catch (error) {
             console.error('Failed to connect WebSocket:', error);
             this.attemptReconnect();
@@ -64,6 +69,19 @@ const websocket = {
     },
 
     handleMessage(event) {
+        // Handle binary data (video frames)
+        if (event.data instanceof ArrayBuffer) {
+            if (app.currentFrameMetadata) {
+                const cameraId = app.currentFrameMetadata.cameraId;
+                ui.updateVideoFrame(cameraId, event.data);
+                
+                // Reset metadata after using it
+                app.currentFrameMetadata = null;
+            }
+            return;
+        }
+        
+        // Handle text data (JSON)
         try {
             const data = JSON.parse(event.data);
             
@@ -89,6 +107,9 @@ const websocket = {
                     break;
                 case 'camera_disconnected':
                     this.handleCameraDisconnected(data);
+                    break;
+                case 'frame_metadata':
+                    app.currentFrameMetadata = data;
                     break;
                 default:
                     console.log('Unknown message type:', data.type);
@@ -193,9 +214,8 @@ const ui = {
         cameraCard.innerHTML = `
             <div class="relative">
                 <div id="video-container-${camera.id}" class="relative w-full h-48 bg-gray-200 flex items-center justify-center">
-                    <img id="video-stream-${camera.id}" 
-                         class="w-full h-full object-cover hidden" 
-                         alt="Camera ${camera.id}">
+                    <canvas id="video-stream-${camera.id}" 
+                         class="w-full h-full object-cover hidden"></canvas>
                     <div id="video-placeholder-${camera.id}" class="flex flex-col items-center justify-center text-gray-500">
                         <span class="material-icons text-4xl mb-2">videocam_off</span>
                         <span class="text-sm">Connecting...</span>
@@ -206,6 +226,9 @@ const ui = {
                     <span id="status-${camera.id}" class="px-2 py-1 text-xs font-medium rounded bg-yellow-100 text-yellow-800">
                         Connecting
                     </span>
+                </div>
+                <div class="absolute bottom-2 right-2 bg-blue-600 bg-opacity-80 text-white text-xs px-2 py-1 rounded">
+                    <span id="fps-counter-${camera.id}">0 fps</span>
                 </div>
             </div>
             <div class="p-3">
@@ -219,6 +242,16 @@ const ui = {
         `;
 
         grid.appendChild(cameraCard);
+        
+        // Initialize canvas context for this camera
+        const canvas = document.getElementById(`video-stream-${camera.id}`);
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            app.canvasContexts.set(camera.id, ctx);
+        }
+        
+        // Request a frame to start the stream
+        this.requestVideoFrame(camera.id);
     },
 
     updateCameraCard(camera) {
@@ -227,51 +260,121 @@ const ui = {
             statusElement.textContent = camera.connected ? 'Connected' : 'Disconnected';
         }
     },
-
+    
     setupDirectVideoStream(camera) {
         if (!camera.stream_url && !camera.ip_address) return;
-
-        const videoElement = document.getElementById(`video-stream-${camera.id}`);
+        
+        const canvasElement = document.getElementById(`video-stream-${camera.id}`);
         const placeholder = document.getElementById(`video-placeholder-${camera.id}`);
         const statusElement = document.getElementById(`status-${camera.id}`);
-
-        if (!videoElement || !placeholder || !statusElement) return;
-
-        // Use the stream URL or construct it from IP address
-        const streamUrl = camera.stream_url || `http://${camera.ip_address}:81/stream`;
         
-        console.log(`Setting up video stream for camera ${camera.id}: ${streamUrl}`);
-
-        // Set up the video stream
-        videoElement.src = streamUrl;
-        videoElement.onload = () => {
-            placeholder.classList.add('hidden');
-            videoElement.classList.remove('hidden');
-            statusElement.textContent = 'Live';
-            statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800';
-            
-            const connectionStatus = document.getElementById(`connection-status-${camera.id}`);
-            if (connectionStatus) connectionStatus.textContent = 'Live Stream';
-        };
-
-        videoElement.onerror = () => {
-            placeholder.classList.remove('hidden');
-            videoElement.classList.add('hidden');
-            statusElement.textContent = 'Error';
-            statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-red-100 text-red-800';
-            
-            const connectionStatus = document.getElementById(`connection-status-${camera.id}`);
-            if (connectionStatus) connectionStatus.textContent = 'Stream Error';
-            
-            console.error(`Failed to load video stream for camera ${camera.id}`);
-        };
+        if (!canvasElement || !placeholder || !statusElement) return;
+        
+        // Show we're ready to receive frames
+        placeholder.classList.add('hidden');
+        canvasElement.classList.remove('hidden');
+        statusElement.textContent = 'Live';
+        statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800';
+        
+        const connectionStatus = document.getElementById(`connection-status-${camera.id}`);
+        if (connectionStatus) connectionStatus.textContent = 'Live Stream';
+        
+        // Start FPS counter
+        this.startFpsCounter(camera.id);
     },
-
-    removeCameraFromGrid(cameraId) {
-        const cameraCard = document.getElementById(`camera-card-${cameraId}`);
-        if (cameraCard) {
-            cameraCard.remove();
+    
+    // Request a video frame for a specific camera
+    requestVideoFrame(cameraId) {
+        if (websocket.connection && websocket.connection.readyState === WebSocket.OPEN) {
+            websocket.send({
+                type: 'request_frame',
+                cameraId: cameraId
+            });
         }
+    },
+    
+    // Update video frame on canvas
+    updateVideoFrame(cameraId, frameData) {
+        const ctx = app.canvasContexts.get(cameraId);
+        const canvasElement = document.getElementById(`video-stream-${cameraId}`);
+        const placeholder = document.getElementById(`video-placeholder-${cameraId}`);
+        const statusElement = document.getElementById(`status-${cameraId}`);
+        
+        if (!ctx || !canvasElement) return;
+        
+        // First time receiving a frame for this camera
+        if (placeholder && placeholder.classList.contains('hidden') === false) {
+            placeholder.classList.add('hidden');
+            canvasElement.classList.remove('hidden');
+            
+            if (statusElement) {
+                statusElement.textContent = 'Live';
+                statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800';
+            }
+            
+            const connectionStatus = document.getElementById(`connection-status-${cameraId}`);
+            if (connectionStatus) connectionStatus.textContent = 'Live Stream';
+            
+            // Start FPS counter
+            this.startFpsCounter(cameraId);
+        }
+        
+        // Convert ArrayBuffer to blob
+        const blob = new Blob([frameData], {type: 'image/jpeg'});
+        
+        // Create an image from the blob and draw it on the canvas when loaded
+        const img = new Image();
+        img.onload = () => {
+            // Set canvas dimensions if needed
+            if (canvasElement.width !== img.width || canvasElement.height !== img.height) {
+                canvasElement.width = img.width;
+                canvasElement.height = img.height;
+            }
+            
+            ctx.drawImage(img, 0, 0);
+            
+            // Store frame timestamp for FPS calculation
+            if (!app.videoFrames.has(cameraId)) {
+                app.videoFrames.set(cameraId, []);
+            }
+            app.videoFrames.get(cameraId).push(Date.now());
+            
+            // We no longer draw detection boxes directly on stream for smoother experience
+            
+            // Request next frame
+            this.requestVideoFrame(cameraId);
+        };
+        
+        img.src = URL.createObjectURL(blob);
+    },
+    
+    // FPS counter for each camera
+    startFpsCounter(cameraId) {
+        if (!app.videoFrames.has(cameraId)) {
+            app.videoFrames.set(cameraId, []);
+        }
+        
+        // Update FPS every second
+        setInterval(() => {
+            const fpsElement = document.getElementById(`fps-counter-${cameraId}`);
+            if (!fpsElement) return;
+            
+            const frames = app.videoFrames.get(cameraId);
+            if (!frames || frames.length === 0) {
+                fpsElement.textContent = '0 fps';
+                return;
+            }
+            
+            // Calculate FPS based on frames received in last second
+            const now = Date.now();
+            const recentFrames = frames.filter(timestamp => now - timestamp < 1000);
+            
+            // Update the FPS counter
+            fpsElement.textContent = `${recentFrames.length} fps`;
+            
+            // Clean up old frame timestamps
+            app.videoFrames.set(cameraId, recentFrames);
+        }, 1000);
     },
 
     updateDetectionDisplay(data) {
@@ -280,41 +383,48 @@ const ui = {
             detectionCount.textContent = data.detections ? data.detections.length : 0;
         }
 
-        // Update detection overlay
-        this.drawDetectionBoxes(data.cameraId, data.detections || []);
+        // We store detection data but don't draw boxes directly on the video stream
+        // for a smoother streaming experience
     },
 
     drawDetectionBoxes(cameraId, detections) {
-        const overlay = document.getElementById(`detection-overlay-${cameraId}`);
-        if (!overlay) return;
-
-        // Clear existing boxes
-        overlay.innerHTML = '';
-
+        const canvas = document.getElementById(`video-stream-${cameraId}`);
+        const ctx = app.canvasContexts.get(cameraId);
+        
+        if (!canvas || !ctx) return;
+        
+        // Get canvas dimensions for proper scaling
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        // Clear previous detection overlay by redrawing the frame
+        // (The next frame will already have been drawn by updateVideoFrame)
+        
         // Draw new detection boxes
-        detections.forEach((detection, index) => {
-            const box = document.createElement('div');
-            box.className = 'absolute border-2 border-red-500 bg-red-500 bg-opacity-20';
-            
+        detections.forEach(detection => {
             // Convert normalized coordinates to pixels
-            const containerRect = overlay.getBoundingClientRect();
-            const x1 = (detection.bbox[0] / 640) * containerRect.width;
-            const y1 = (detection.bbox[1] / 640) * containerRect.height;
-            const x2 = (detection.bbox[2] / 640) * containerRect.width;
-            const y2 = (detection.bbox[3] / 640) * containerRect.height;
+            const x1 = detection.bbox[0] * width;
+            const y1 = detection.bbox[1] * height;
+            const x2 = detection.bbox[2] * width;
+            const y2 = detection.bbox[3] * height;
+            const boxWidth = x2 - x1;
+            const boxHeight = y2 - y1;
             
-            box.style.left = `${x1}px`;
-            box.style.top = `${y1}px`;
-            box.style.width = `${x2 - x1}px`;
-            box.style.height = `${y2 - y1}px`;
+            // Draw bounding box
+            ctx.strokeStyle = detection.class_name === 'accident' ? '#FF0000' : '#00FF00';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x1, y1, boxWidth, boxHeight);
             
-            // Add label
-            const label = document.createElement('div');
-            label.className = 'absolute -top-6 left-0 bg-red-500 text-white text-xs px-1 rounded';
-            label.textContent = `${detection.class_name} (${(detection.confidence * 100).toFixed(1)}%)`;
-            box.appendChild(label);
+            // Draw label background
+            const label = `${detection.class_name} (${(detection.confidence * 100).toFixed(0)}%)`;
+            ctx.font = '12px Arial';
+            const textWidth = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(x1, y1 - 18, textWidth + 6, 18);
             
-            overlay.appendChild(box);
+            // Draw label text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(label, x1 + 3, y1 - 5);
         });
     },
 
