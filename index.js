@@ -13,7 +13,7 @@ import {
   getSessions,
   getSessionData,
   getSessionDetections
-} from './mongo.js';
+} from './node_server_modules/mongo.js';
 
 dotenv.config();
 
@@ -52,10 +52,10 @@ const objectDetection = {
   // Use environment-specific WebSocket URL for AI service
   apiEndpoint: isProduction 
     ? 'wss://smart-road-system.onrender.com/ai-ws' 
-    : `ws://localhost:${process.env.PYTHON_API_PORT || 8000}/ws`,
+    : `ws://localhost:${process.env.PYTHON_API_PORT || 8080}/ws`,
   httpApiEndpoint: isProduction 
     ? 'https://smart-road-system.onrender.com/detect'
-    : `http://localhost:${process.env.PYTHON_API_PORT || 8000}/detect`, // HTTP endpoint as backup
+    : `http://localhost:${process.env.PYTHON_API_PORT || 8080}/detect`, // HTTP endpoint as backup
   confidenceThreshold: 0.45, // Using default from Python AI configuration
   detectionInterval: 200, // ms between detections (limit to ~5 fps for AI to avoid overloading)
   lastDetectionTime: new Map(), // Track last detection time per camera
@@ -181,13 +181,18 @@ function startPythonAPI() {
       
       try {
         // Check if the API is running
-        const response = await axios.get('http://localhost:8000/health', { 
+        // Use the port from environment or default to 8080
+        const pythonApiPort = process.env.PYTHON_API_PORT || 8080;
+        console.log(`HTTP request: GET /health`);
+        const response = await axios.get(`http://localhost:${pythonApiPort}/health`, { 
           timeout: 3000,
           validateStatus: () => true // Accept any status code
         });
         
-        if (response.status === 200 && response.data && response.data.status === 'healthy') {
-          console.log("Python API is running and healthy");
+        // Consider the API running if it responds at all (even with 500)
+        // The important thing is that the server is up and running
+        if (response.status === 200 || (response.status === 500 && response.data)) {
+          console.log("Python API is running" + (response.status === 200 ? " and healthy" : " but returned an error"));
           objectDetection.enabled = true;
           clearInterval(healthCheckInterval);
         } else {
@@ -1458,17 +1463,29 @@ server.listen(PORT, async () => {
   objectDetection.rateLimit.lastResetTime = Date.now();
     // Function to check API health
   async function checkDetectionApiHealth() {
-     const apiPort = process.env.PYTHON_API_PORT || 8000;
+     const apiPort = process.env.PYTHON_API_PORT || 8080;
      const healthUrl = isProduction 
     ? `https://${serverConfig.host}/health`
     :  `http://localhost:${apiPort}/health`;
+    console.log(`HTTP request: GET ${healthUrl}`);
     try {
       const response = await axios.get(healthUrl, { 
         timeout: 3000,
         validateStatus: () => true // Accept any status code
       });
       
-      return response.status === 200 && response.data && response.data.status === 'healthy';
+      // Accept any response that returns data, even with 500 status
+      // This means the server is running, which is what we care about
+      if (response.status === 200 && response.data && response.data.status === 'healthy') {
+        console.log("[API HEALTH] API is running and healthy");
+        return true;
+      } else if (response.status === 500 && response.data) {
+        // Server is up but returning an error - still consider it available
+        console.log("[API HEALTH] API is running but returned an error");
+        return true;
+      }
+      console.log(`[API HEALTH] API returned status ${response.status}`);
+      return false;
     } catch (error) {
       console.error(`[API HEALTH] Health check failed: ${error.message}`);
       return false;

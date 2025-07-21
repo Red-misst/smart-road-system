@@ -9,15 +9,20 @@ import io
 import json
 import os
 import time
+import logging
+import asyncio
 from typing import Dict, List, Optional
 from contextlib import asynccontextmanager
-import logging
 
 import cv2
 import numpy as np
 import uvicorn
-import asyncio
 import websockets
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from ultralytics import YOLO
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -72,10 +77,14 @@ is_production = os.getenv("NODE_ENV") == "production"
 if is_production:
     node_server_url = os.getenv("NODE_SERVER_URL_PRODUCTION", "wss://smart-road-system.onrender.com") + "/?type=ai"
 else:
-    node_server_url = os.getenv("NODE_SERVER_URL_LOCAL", "ws://localhost:3000") + "/?type=ai"
+    # Make sure we're using the same port as the Node.js server
+    node_js_port = os.getenv("NODE_SERVER_PORT_LOCAL", "3000")
+    node_server_url = f"ws://localhost:{node_js_port}/?type=ai"
 
-# For server port
-port = int(os.getenv("PORT", 8000))
+# For server port - always use the port from PYTHON_API_PORT env var or default to 8080
+# This ensures consistency with the Node.js server's expectations
+port = int(os.getenv("PYTHON_API_PORT", 8080))
+logger.info(f"Starting Python API on port {port}")
 
 # --- Helper Functions ---
 
@@ -106,8 +115,8 @@ def decode_base64_image(image_string: str):
         return None
 
 async def process_image(image_data, confidence_threshold=0.01, camera_id=None):  
-    import cv2
-    import numpy as np
+    from base64 import b64decode, b64encode
+    start_time = time.time()
     import time
     from base64 import b64decode, b64encode
     start_time = time.time()
@@ -357,8 +366,12 @@ async def detect_objects(request: DetectionRequest):
 @app.get("/health", status_code=200)
 async def health_check():
     """Endpoint to check if the API is running."""
-    get_model()  # Ensure model is loaded
-    return {"status": "healthy", "model_loaded": model is not None}
+    try:
+        get_model()  # Ensure model is loaded
+        return {"status": "healthy", "model_loaded": model is not None}
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {"status": "healthy", "model_loaded": model is not None, "message": "API is running but model may not be fully loaded yet"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

@@ -1,0 +1,3 @@
+// server.js
+// Move HTTP server setup and endpoints here, import needed modules from main.js
+// ...existing code...
