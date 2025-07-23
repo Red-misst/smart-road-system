@@ -520,16 +520,6 @@ let map,
 document.addEventListener("DOMContentLoaded", () => {
   // Initialize map first
   initializeMap();
-
-  // API status elements
-  const apiStatusBanner = document.getElementById("api-status-banner");
-  const apiStatusDot = document.getElementById("api-status-dot");
-  const apiStatusText = document.getElementById("api-status-text");
-  const apiStatusIndicator = document.getElementById("api-status-indicator");
-  const apiStatusModal = document.getElementById("api-status-modal");
-  const apiModalClose = document.getElementById("api-modal-close");
-  const apiModalMessage = document.getElementById("api-modal-message");
-
   // Show API status banner initially
   apiStatusBanner.classList.remove("hidden");
 
@@ -541,57 +531,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Setup event listeners for UI elements
   setupUIEventListeners();
   
-  // Function to check API status
-  function checkApiStatus() {
-    const apiUrl = "/health"; 
-
-    fetch(apiUrl)
-      .then((response) => response.json())
-      .then((data) => {
-        if (data.status === "healthy" && data.model_loaded) {
-          // API is ready
-          apiStatusBanner.classList.add("hidden");
-          apiStatusDot.classList.remove("bg-yellow-400", "bg-red-500");
-          apiStatusDot.classList.add("bg-green-500");
-          apiStatusDot.classList.remove("pulse");
-          apiStatusText.textContent = "API Ready";
-          apiStatusText.classList.remove("text-yellow-700", "text-red-700");
-          apiStatusText.classList.add("text-green-700");
-          apiStatusIndicator.classList.remove("bg-yellow-50", "bg-red-50");
-          apiStatusIndicator.classList.add("bg-green-50");
-        }
-      })
-      .catch(() => {
-        // API is not available
-        apiStatusBanner.classList.remove("hidden");
-        apiStatusDot.classList.remove("bg-yellow-400", "bg-green-500");
-        apiStatusDot.classList.add("bg-red-500", "pulse");
-        apiStatusText.textContent = "API Offline";
-        apiStatusText.classList.remove("text-yellow-700", "text-green-700");
-        apiStatusText.classList.add("text-red-700");
-        apiStatusIndicator.classList.remove("bg-yellow-50", "bg-green-50");
-        apiStatusIndicator.classList.add("bg-red-50");
-
-        // Show modal after a delay if API is still offline
-        setTimeout(() => {
-          if (apiStatusText.textContent === "API Offline") {
-            apiStatusModal.classList.remove("hidden");
-            apiModalMessage.innerHTML = `
-              <strong class="text-red-600">The traffic detection service is currently offline.</strong><br><br>
-              Traffic analysis and vehicle detection require the AI service to be running.<br><br>
-              Please check that the Python AI service has started properly.
-            `;
-          }
-        }, 5000);
-      });
-  }
-
-  // Check status initially after a delay
-  setTimeout(checkApiStatus, 2000);
-
-  // Check periodically
-  setInterval(checkApiStatus, 10000);
-
   // Update time display
   setInterval(() => {
     document.getElementById("current-time").textContent = new Date().toLocaleTimeString(
@@ -629,57 +568,57 @@ function setupUIEventListeners() {
 }
 
 function initializeMap() {
-  const defaultLocation = [-1.2921, 36.8219];
+  const eldoretLocation = [0.5167, 35.2833]; // Eldoret, Kenya
 
   // Create Leaflet map
   map = L.map("map", {
     zoomControl: false,
     attributionControl: false
-  }).setView(defaultLocation, 15);
+  }).setView(eldoretLocation, 15);
 
-  // Use a dark-themed tile layer (Carto Dark Matter as base)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  // Use Carto's Voyager tile layer (best for navigation-like visuals)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
     maxZoom: 19
   }).addTo(map);
 
-  // Neon green route line
+  // Route polyline
   path = L.polyline([], {
-    color: '#39ff14',  // neon green
+    color: '#39ff14', // Neon green
     weight: 5,
     opacity: 0.9
   }).addTo(map);
 
-  // Add futuristic styles
+  // Custom styling
   const mapStyleElement = document.createElement('style');
   mapStyleElement.textContent = `
     .leaflet-container {
-      background-color: #0d0d0d; /* deep dark background */
-      border: 2px solid #00ff99;
+      background-color: #f8f8f8;
+      border: 2px solid #00cc99;
       border-radius: 12px;
-      box-shadow: 0 0 20px #00ffcc;
-      color: #00ffcc;
+      box-shadow: 0 0 15px #00ffcc;
+      color: #222;
     }
 
     .leaflet-tile-pane {
-      filter: saturate(1.5) contrast(1.3) brightness(0.9);
+      filter: saturate(1.1) contrast(1.05);
     }
 
     .leaflet-control-zoom a {
-      background-color: #1f1f1f;
-      color: #00ffcc;
-      border: 1px solid #00ffcc;
+      background-color: #fff;
+      color: #00aa88;
+      border: 1px solid #00aa88;
     }
 
     .leaflet-control-zoom a:hover {
-      background-color: #00ffcc;
-      color: #000;
+      background-color: #00aa88;
+      color: #fff;
     }
 
     #map-coordinates {
       font-family: "Courier New", monospace;
-      color: #00ffcc;
-      background: rgba(0, 0, 0, 0.6);
+      color: #00aa88;
+      background: rgba(255, 255, 255, 0.8);
       padding: 4px 8px;
       border-radius: 6px;
       position: absolute;
@@ -705,7 +644,7 @@ function initializeMap() {
   L.control.zoom({ position: "topright" }).addTo(map);
   L.control.attribution({ position: "bottomright", prefix: false }).addTo(map);
 
-  // Display coordinates
+  // Coordinate display
   map.on("mousemove", (e) => {
     document.getElementById("map-coordinates").innerText = 
       `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(6)}`;
@@ -713,10 +652,11 @@ function initializeMap() {
 
   // Map hooks
   setupMapEventListeners();
-  addSampleIntersections();
   addRouteLines();
   fixMapDisplay();
 }
+
+
 
 function setupMapEventListeners() {
   document.getElementById("map-fullscreen-btn").addEventListener("click", toggleFullscreen);
@@ -937,98 +877,7 @@ function calculateAndDisplayRoute() {
     });
 }
 
-function addSampleIntersections() {
-  intersections = [
-    {
-      id: "int1",
-      name: "Main St & Central Ave",
-      lat: 0.513,
-      lng: 35.27,
-      status: "green",
-      cameras: ["cam1"]
-    },
-    {
-      id: "int2",
-      name: "Highway 101 & Oak St",
-      lat: 0.514,
-      lng: 35.272,
-      status: "yellow",
-      cameras: ["cam2"]
-    },
-    {
-      id: "int3",
-      name: "Industrial Rd & Pine Ave",
-      lat: 0.5125,
-      lng: 35.275,
-      status: "red",
-      cameras: ["cam3"]
-    }
-  ];
 
-  intersections.forEach((intersection) => {
-    addIntersectionMarker(intersection);
-  });
-
-  // Update counts
-  document.getElementById("cameras-count").textContent = intersections.length;
-
-  const congestedCount = intersections.filter((i) => i.status === "red").length;
- 
-}
-
-function addIntersectionMarker(intersection) {
-  const icon = createIntersectionIcon(intersection.status);
-
-  const marker = L.marker([intersection.lat, intersection.lng], {
-    icon,
-    title: intersection.name
-  }).addTo(map);
-
-  marker.bindPopup(createIntersectionPopup(intersection));
-  markers.set(intersection.id, marker);
-}
-
-function createIntersectionIcon(status) {
-  const statusClass =
-    status === "red"
-      ? "bg-red-600"
-      : status === "yellow"
-      ? "bg-yellow-500"
-      : "bg-green-600";
-
-  return L.divIcon({
-    className: `rounded-full ${statusClass} flex items-center justify-center`,
-    iconSize: [24, 24],
-    html: '<span class="material-icons" style="font-size: 14px; color: white;">traffic</span>'
-  });
-}
-
-function createIntersectionPopup(intersection) {
-  const statusColor =
-    intersection.status === "red"
-      ? "text-red-600"
-      : intersection.status === "yellow"
-      ? "text-yellow-600"
-      : "text-green-600";
-
-  return `
-    <div class="popup-content">
-      <div class="font-semibold text-gray-800">${intersection.name}</div>
-      <div class="mt-2 text-sm">
-        <div class="flex items-center mb-1">
-          <span class="material-icons mr-1 ${statusColor}" style="font-size: 16px;">circle</span>
-          <span class="font-medium ${statusColor}">Traffic: ${intersection.status.toUpperCase()}</span>
-        </div>
-        <div class="flex items-center">
-          <span class="material-icons mr-1 text-gray-600" style="font-size: 14px;">videocam</span>
-          <span class="text-gray-600">Camera: ${intersection.cameras ? intersection.cameras[0] : "None"}</span>
-        </div>
-      </div>
-      <button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 mt-3 text-xs rounded-full" 
-              onclick="showIntersectionDetails('${intersection.id}')">View Analysis</button>
-    </div>
-  `;
-}
 
 function addRouteLines() {
   // Main Highway Route (red)
@@ -1132,21 +981,6 @@ function toggleFullscreen() {
 }
 
 
-function showIntersectionDetails(intersectionId) {
-  const intersection = intersections.find((i) => i.id === intersectionId);
-  if (intersection) {
-    const detailSection = document.getElementById("intersection-detail");
-    document.getElementById("detail-title").innerHTML = `
-      <span class="material-icons text-primary mr-1">traffic</span>
-      <span>${intersection.name}</span>
-    `;
-    document.getElementById("detail-density").textContent = intersection.status.toUpperCase();
-    document.getElementById("detail-vehicles").textContent = Math.floor(Math.random() * 20) + 5;
-
-    detailSection.classList.remove("hidden");
-  }
-}
-
 function fixMapDisplay() {
   window.addEventListener("resize", () => {
     map.invalidateSize();
@@ -1159,3 +993,4 @@ function fixMapDisplay() {
 
 // Make the showIntersectionDetails function globally available for the onClick in the popup
 window.showIntersectionDetails = showIntersectionDetails;
+
