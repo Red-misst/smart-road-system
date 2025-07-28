@@ -28,15 +28,17 @@ const clients = {
   ai: null // AI WebSocket connection
 };
 
-// Settings for video streaming - optimized for 60fps delivery
+// Settings for video streaming - optimized for 60fps delivery with intelligent frame dropping
 const streamSettings = {
   frameInterval: 16, // ~60 fps (milliseconds between frames to browsers)
-  maxQueueSize: 2,   // Smaller queue for lower latency
+  maxQueueSize: 5,   // Increased for smoother processing
   lastFrameSent: new Map(),
   frameQueue: new Map(),
   latestFrames: new Map(), // Store latest frame from each camera: Map<cameraId, frame>
   frameCounter: new Map(), // Count frames per camera for logging
-  lastLogTime: new Map()   // Track last log time per camera
+  lastLogTime: new Map(),   // Track last log time per camera
+  frameTimestamps: new Map(), // Track frame timestamps for age-based dropping
+  processingQueue: new Map() // Queue for frames pending AI processing
 };
 
 // Object detection configuration - optimized for active sessions only
@@ -57,18 +59,18 @@ const objectDetection = {
     ? 'https://smart-road-system.onrender.com/detect'
     : `http://localhost:${process.env.PYTHON_API_PORT || 8000}/detect`, // HTTP endpoint as backup
   confidenceThreshold: 0.45, // Using default from Python AI configuration
-  detectionInterval: 200, // ms between detections (limit to ~5 fps for AI to avoid overloading)
+  detectionInterval: 50, // Reduced to 50ms for more frequent updates (~20 fps)
   lastDetectionTime: new Map(), // Track last detection time per camera
   detectionResults: new Map(), // Store latest detection results per camera
   processingCount: 0, // Track currently processing detections
-  maxConcurrent: 2, // Maximum concurrent detection requests (reduced to avoid overloading)
+  maxConcurrent: 4, // Increased concurrent processing
   errorCount: 0, // Track consecutive errors
   maxErrors: 10, // Maximum consecutive errors before disabling
   pythonProcess: null, // Store reference to the Python process
   trafficStatus: new Map(), // Track traffic status for each intersection: Map<cameraId, status>
   detectionLog: new Map(), // Comprehensive detection logging per session
   rateLimit: {
-    maxRequestsPerMinute: 300, // Maximum requests per minute (5 per second)
+    maxRequestsPerMinute: 600, // Maximum requests per minute (5 per second)
     requestCounter: 0,  // Counter for current period
     lastResetTime: Date.now(), // Last time the counter was reset
   }
@@ -628,8 +630,12 @@ function generateAlternativeRoutes(cameraId, density) {
 function processVideoFrame(frame, cameraId) {
   const now = Date.now();
   
+  // Add timestamp to frame
+  frame.timestamp = now;
+  
   // Store the latest frame from this camera
   streamSettings.latestFrames.set(cameraId, frame);
+  streamSettings.frameTimestamps.set(cameraId, now);
   
   // Update frame counter for this camera
   const currentCount = streamSettings.frameCounter.get(cameraId) || 0;
@@ -645,6 +651,12 @@ function processVideoFrame(frame, cameraId) {
     streamSettings.frameCounter.set(cameraId, 0);
   }
   
+  // Get or initialize processing queue for this camera
+  if (!streamSettings.processingQueue.has(cameraId)) {
+    streamSettings.processingQueue.set(cameraId, []);
+  }
+  const queue = streamSettings.processingQueue.get(cameraId);
+  
   // Stream to browsers at 60fps (forward all frames immediately for real-time viewing)
   broadcastFrameToBrowsers(frame, cameraId);
   
@@ -655,48 +667,59 @@ function processVideoFrame(frame, cameraId) {
   
   // Perform object detection ONLY if all conditions are met
   if (objectDetection.enabled && clients.ai && activeSessionId) {
-    
     // Check rate limiting
     if (now - objectDetection.rateLimit.lastResetTime > 60000) {
-      // Reset counter every minute
       objectDetection.rateLimit.requestCounter = 0;
       objectDetection.rateLimit.lastResetTime = now;
     }
     
-    // Only proceed if we're under the rate limit
+    // Add frame to processing queue
+    queue.push({ frame, timestamp: now });
+    
+    // Manage queue size - drop older frames if queue gets too large
+    if (queue.length > streamSettings.maxQueueSize) {
+      // Keep most recent frames and drop older ones
+      const numToRemove = Math.floor(queue.length / 2);
+      queue.splice(0, numToRemove);
+      console.log(`[QUEUE MANAGEMENT] Dropped ${numToRemove} old frames for camera ${cameraId}`);
+    }
+    
+    // Process frame if we're under rate limit and enough time has passed
     if (objectDetection.rateLimit.requestCounter < objectDetection.rateLimit.maxRequestsPerMinute) {
       const lastDetection = objectDetection.lastDetectionTime.get(cameraId) || 0;
       
-      // Only run detection if enough time has passed since last detection (reduced frequency for AI)
       if (now - lastDetection >= objectDetection.detectionInterval) {
-        // Update last detection time right away to prevent scheduling too many
-        objectDetection.lastDetectionTime.set(cameraId, now);
+        // Get the newest frame from queue
+        const frameToProcess = queue.pop();
         
-        // Increment the rate limit counter
-        objectDetection.rateLimit.requestCounter++;
-        
-        console.log(`[DETECTION TRIGGER] Sending frame to AI for processing (rate limit: ${objectDetection.rateLimit.requestCounter}/${objectDetection.rateLimit.maxRequestsPerMinute})`);
-        
-        // Send frame to AI via WebSocket
-        sendFrameToAI(frame, cameraId);
+        if (frameToProcess) {
+          const frameAge = now - frameToProcess.timestamp;
+          
+          // Skip if frame is too old (more than 2 seconds)
+          if (frameAge > 2000) {
+            console.log(`[FRAME SKIP] Skipping old frame (${frameAge}ms old) for camera ${cameraId}`);
+            return;
+          }
+          
+          objectDetection.lastDetectionTime.set(cameraId, now);
+          objectDetection.rateLimit.requestCounter++;
+          
+          console.log(`[DETECTION TRIGGER] Processing frame (age: ${frameAge}ms, queue: ${queue.length}, rate: ${objectDetection.rateLimit.requestCounter}/${objectDetection.rateLimit.maxRequestsPerMinute})`);
+          
+          sendFrameToAI(frameToProcess.frame, cameraId);
+        }
       }
-    } else {
-      // Log rate limiting occasionally
-      if (Math.random() < 0.01) {
-        console.log(`[RATE LIMIT] Rate limit reached for object detection: ${objectDetection.rateLimit.requestCounter} requests in the last minute`);
-      }
+    } else if (Math.random() < 0.01) {
+      console.log(`[RATE LIMIT] Rate limit reached: ${objectDetection.rateLimit.requestCounter} requests/minute`);
     }
-  } else {
-    // Log why detection is skipped occasionally
-    if (Math.random() < 0.005) { // Very rarely to avoid spam
-      const reasons = [];
-      if (!objectDetection.enabled) reasons.push('AI disabled');
-      if (!clients.ai) reasons.push('AI not connected');
-      if (!activeSessionId) reasons.push('No active session');
-      
-      if (reasons.length > 0) {
-        console.log(`[DETECTION SKIP] Not eligible for AI processing: ${reasons.join(', ')}`);
-      }
+  } else if (Math.random() < 0.005) {
+    const reasons = [];
+    if (!objectDetection.enabled) reasons.push('AI disabled');
+    if (!clients.ai) reasons.push('AI not connected');
+    if (!activeSessionId) reasons.push('No active session');
+    
+    if (reasons.length > 0) {
+      console.log(`[DETECTION SKIP] Not eligible for AI processing: ${reasons.join(', ')}`);
     }
   }
 }
@@ -843,11 +866,35 @@ const SMS_CONFIG = {
   DEVICE_ID: process.env.TEXTBEE_DEVICE_ID,
   API_KEY: process.env.TEXTBEE_API_KEY,
   ACCIDENT_NUMBER: process.env.ACCIDENT_NOTIFY_NUMBER,
-  THRESHOLD_NUMBER: process.env.THRESHOLD_NOTIFY_NUMBER
+  THRESHOLD_NUMBER: process.env.THRESHOLD_NOTIFY_NUMBER,
+  MAX_MESSAGES_PER_SESSION: 2 // Maximum messages per number per session
 };
 
-async function sendSMSAlert(recipient, message) {
+async function sendSMSAlert(recipient, message, session) {
   try {
+    // Validate session parameter
+    if (!session) {
+      console.error('[SMS ALERT] Cannot send SMS: Session object is null');
+      return false;
+    }
+
+    // Initialize SMS counters if they don't exist
+    if (!session.smsCounters) {
+      session.smsCounters = {};
+      // Save the initialized counters
+      await updateSession(session._id, { smsCounters: {} });
+    }
+    if (!session.smsCounters[recipient]) {
+      session.smsCounters[recipient] = 0;
+    }
+
+    // Check if we've hit the limit for this recipient
+    if (session.smsCounters[recipient] >= SMS_CONFIG.MAX_MESSAGES_PER_SESSION) {
+      console.log(`[SMS ALERT] Skipping SMS to ${recipient}: Message limit (${SMS_CONFIG.MAX_MESSAGES_PER_SESSION}) reached for this session`);
+      return false;
+    }
+
+    // Send the SMS
     const response = await axios.post(
       `${SMS_CONFIG.BASE_URL}/gateway/devices/${SMS_CONFIG.DEVICE_ID}/send-sms`,
       {
@@ -856,9 +903,18 @@ async function sendSMSAlert(recipient, message) {
       },
       { headers: { 'x-api-key': SMS_CONFIG.API_KEY } }
     );
-    console.log('[SMS ALERT] Successfully sent SMS:', response.data);
+
+    // Increment the counter on successful send
+    session.smsCounters[recipient]++;
+    console.log(`[SMS ALERT] Successfully sent SMS to ${recipient} (${session.smsCounters[recipient]}/${SMS_CONFIG.MAX_MESSAGES_PER_SESSION} for this session):`, response.data);
+    
+    // Save updated counters to the session in database
+    await updateSession(session._id, { smsCounters: session.smsCounters });
+    
+    return true;
   } catch (error) {
     console.error('[SMS ALERT] Failed to send SMS:', error.message);
+    return false;
   }
 }
 
@@ -964,73 +1020,46 @@ async function processAIResponse(message) {
     // Always add the detection to the active session in MongoDB
     await addDetectionToSession(activeSessionId, detectionRecord);
     console.log(`Detection saved to database for session ${activeSessionId}`);
-
+    
     // Get session parameters for threshold checks
     const session = await getSessionData(activeSessionId);
-
-    // --- SMS Alert Flags (per session) ---
-    if (!session.smsFlags) session.smsFlags = {};
-    // Accident SMS flag
-    if (typeof session.smsFlags.accidentSent === 'undefined') session.smsFlags.accidentSent = false;
-    // Threshold SMS flag
-    if (typeof session.smsFlags.thresholdSent === 'undefined') session.smsFlags.thresholdSent = false;
+    
+    // Check if session exists
+    if (!session) {
+      console.error(`[AI DETECTION] No session found for ID: ${activeSessionId}`);
+      return;
+    }
+    broadcastDetectionResults(cameraId, results);
+    // Initialize SMS counters if they don't exist
+    if (!session.smsCounters) {
+      session.smsCounters = {};
+      // Save the initialized counters
+      await updateSession(session._id, { smsCounters: {} });
+    }
 
     // Check car count threshold
-    if (session && session.count > 0 && !session.smsFlags.thresholdSent) {  // if count threshold was set and not sent yet
+    if (session && session.count > 0) {  // if count threshold was set
       // Get all detections for this session
       const allDetections = await getSessionDetections(activeSessionId, 1000, 0);
       const totalCars = allDetections.reduce((sum, det) => sum + (det.carCount || 0), 0);
-<<<<<<< HEAD
-      
   if (totalCars >= session.count) {
-    // Send threshold alert SMS only once per session
-    const smsMsg = "ALERT: Traffic threshold exceeded at route X. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com";
-    await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
+    // Send threshold alerts with rate limiting
+    const smsMsg = `ALERT: Traffic threshold exceeded at route X. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com`;
+    await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
     const adminMsg = `ALERT: Traffic threshold exceeded threshold: ${session.count} at route X. Deploy traffic management.`;
-    await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
-    session.smsFlags.thresholdSent = true;
-    // Optionally persist this flag in DB if needed
+    await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
   }
 }
 
-// Check for accidents (only send one SMS per session)
-if (accidentCount > 0 && !session.smsFlags.accidentSent) {
-  const smsMsg = "URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com";
-  await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
-  // Send accident alert SMS only once per session
+// Check for accidents and send alerts with rate limiting
+if (accidentCount > 0) {
+  const smsMsg = `URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com`;
+  await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
   const adminMsg = `URGENT: Accident detected at camera route X Time: ${new Date().toLocaleString()}. Send Authorities.`;
-  await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
-  session.smsFlags.accidentSent = true;
-  // Optionally persist this flag in DB if needed
+  await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
 }
-    
-=======
-
-      if (totalCars >= session.count) {
-        // Send threshold alert SMS only once per session
-        const smsMsg = `ALERT: Traffic threshold exceeded at route X. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com`;
-        await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
-        const adminMsg = `ALERT: Traffic threshold exceeded threshold: ${session.count} at route X. Deploy traffic management.`;
-        await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
-        session.smsFlags.thresholdSent = true;
-        // Optionally persist this flag in DB if needed
-      }
-    }
-
-    // Check for accidents (only send one SMS per session)
-    if (accidentCount > 0 && !session.smsFlags.accidentSent) {
-      const smsMsg = `URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com`;
-      await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
-      // Send accident alert SMS only once per session
-      const adminMsg = `URGENT: Accident detected at camera route X Time: ${new Date().toLocaleString()}. Send Authorities.`;
-      await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
-      session.smsFlags.accidentSent = true;
-      // Optionally persist this flag in DB if needed
-    }
-
->>>>>>> b2e8eeb10e46d5fdd791a98727fa0f393c5b5f17
     // Broadcast detection results to browser clients
-    broadcastDetectionResults(cameraId, results);
+     
 
     // Handle traffic redirection based on analysis
     if (results.traffic_analysis) {
@@ -1038,7 +1067,7 @@ if (accidentCount > 0 && !session.smsFlags.accidentSent) {
     }
   } catch (error) {
     console.error(`Error processing detection result: ${error.message}`);
-  }
+  } 
 }
 
 /**
