@@ -974,19 +974,27 @@ async function processAIResponse(message) {
       const allDetections = await getSessionDetections(activeSessionId, 1000, 0);
       const totalCars = allDetections.reduce((sum, det) => sum + (det.carCount || 0), 0);
       
-      if (totalCars >= session.count) {
-        // Send threshold alert SMS
-        const message = `ALERT: Traffic threshold exceeded at camera ${cameraId}. Current count: ${totalCars}, Threshold: ${session.count}`;
-        await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, message);
-      }
-    }
-    
-    // Check for accidents
-    if (accidentCount > 0) {
-      // Send accident alert SMS
-      const message = `URGENT: Accident detected at camera ${cameraId}! Time: ${new Date().toLocaleString()}`;
-      await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, message);
-    }
+  if (totalCars >= session.count) {
+    // Send threshold alert SMS only once per session
+    const smsMsg = "ALERT: Traffic threshold exceeded at route X. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com";
+    await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
+    const adminMsg = `ALERT: Traffic threshold exceeded threshold: ${session.count} at route X. Deploy traffic management.`;
+    await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
+    session.smsFlags.thresholdSent = true;
+    // Optionally persist this flag in DB if needed
+  }
+}
+
+// Check for accidents (only send one SMS per session)
+if (accidentCount > 0 && !session.smsFlags.accidentSent) {
+  const smsMsg = "URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com";
+  await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg);
+  // Send accident alert SMS only once per session
+  const adminMsg = `URGENT: Accident detected at camera route X Time: ${new Date().toLocaleString()}. Send Authorities.`;
+  await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg);
+  session.smsFlags.accidentSent = true;
+  // Optionally persist this flag in DB if needed
+}
     
     // Broadcast detection results to browser clients
     broadcastDetectionResults(cameraId, results);
