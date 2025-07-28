@@ -5,681 +5,508 @@
 
 // Global application state
 const app = {
-    websocket: null,
-    map: null,
-    cameras: new Map(),
-    detections: new Map(),
-    currentSession: null,
-    videoFrames: new Map(), // Store latest video frames
-    canvasContexts: new Map() // Store canvas contexts for drawing
+  websocket: null,
+  map: null,
+  detections: new Map(),
+  currentSession: null
 };
 
 // WebSocket connection management
 const websocket = {
-    connection: null,
-    reconnectAttempts: 0,
-    maxReconnectAttempts: 5,
-    reconnectDelay: 3000,
+  connection: null,
+  reconnectAttempts: 0,
+  maxReconnectAttempts: 5,
+  reconnectDelay: 3000,
 
-    connect() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}?type=browser`;
-        
-        try {
-            this.connection = new WebSocket(wsUrl);
-            app.websocket = this.connection;
-            
-            this.connection.onopen = () => {
-                console.log('WebSocket connected');
-                this.reconnectAttempts = 0;
-                ui.updateConnectionStatus(true);
-                
-                // Request camera list
-                this.send({ type: 'get_camera_list' });
-            };
-            
-            this.connection.onmessage = (event) => {
-                this.handleMessage(event);
-            };
-            
-            this.connection.onclose = () => {
-                console.log('WebSocket disconnected');
-                ui.updateConnectionStatus(false);
-                this.attemptReconnect();
-            };
-            
-            this.connection.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                ui.updateConnectionStatus(false);
-            };
-            
-            // Set binary type to arraybuffer for handling binary frames
-            this.connection.binaryType = 'arraybuffer';
-            
-        } catch (error) {
-            console.error('Failed to connect WebSocket:', error);
-            this.attemptReconnect();
-        }
-    },
+  connect() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}?type=browser`;
 
-    send(data) {
-        if (this.connection && this.connection.readyState === WebSocket.OPEN) {
-            this.connection.send(JSON.stringify(data));
-        }
-    },
+    try {
+      this.connection = new WebSocket(wsUrl);
+      app.websocket = this.connection;
 
-    handleMessage(event) {
-        // Handle binary data (video frames)
-        if (event.data instanceof ArrayBuffer) {
-            if (app.currentFrameMetadata) {
-                const cameraId = app.currentFrameMetadata.cameraId;
-                ui.updateVideoFrame(cameraId, event.data);
-                
-                // Reset metadata after using it
-                app.currentFrameMetadata = null;
-            }
-            return;
-        }
-        
-        // Handle text data (JSON)
-        try {
-            const data = JSON.parse(event.data);
-            
-            switch (data.type) {
-                case 'camera_list':
-                    this.handleCameraList(data.cameras);
-                    break;
-                case 'camera_info':
-                case 'camera_list_item':
-                    this.handleCameraInfo(data);
-                    break;
-                case 'camera_direct_connect':
-                    this.handleDirectConnect(data);
-                    break;
-                case 'detection_results':
-                    this.handleDetectionResults(data);
-                    break;
-                case 'session_status':
-                    this.handleSessionStatus(data);
-                    break;
-                case 'traffic_redirection':
-                    this.handleTrafficRedirection(data);
-                    break;
-                case 'camera_disconnected':
-                    this.handleCameraDisconnected(data);
-                    break;
-                case 'frame_metadata':
-                    app.currentFrameMetadata = data;
-                    break;
-                default:
-                    console.log('Unknown message type:', data.type);
-            }
-        } catch (error) {
-            console.error('Error parsing WebSocket message:', error);
-        }
-    },
+      this.connection.onopen = () => {
+        console.log("WebSocket connected");
+        this.reconnectAttempts = 0;
+        ui.updateConnectionStatus(true);
 
-    handleCameraList(cameras) {
-        console.log('Received camera list:', cameras);
-        cameras.forEach(camera => {
-            this.handleCameraInfo(camera);
-        });
-        ui.updateCameraCount(cameras.length);
-    },
+        //
+      };
 
-    handleCameraInfo(camera) {
-        app.cameras.set(camera.id, camera);
-        ui.addCameraToGrid(camera);
-        
-        if (camera.ip_address) {
-            // Setup direct video stream
-            ui.setupDirectVideoStream(camera);
-        }
-    },
+      this.connection.onmessage = (event) => {
+        this.handleMessage(event);
+      };
 
-    handleDirectConnect(data) {
-        const camera = app.cameras.get(data.id);
-        if (camera) {
-            camera.stream_url = data.stream_url;
-            camera.ip_address = data.ip_address;
-            app.cameras.set(data.id, camera);
-            ui.setupDirectVideoStream(camera);
-        }
-    },
+      this.connection.onclose = () => {
+        console.log("WebSocket disconnected");
+        ui.updateConnectionStatus(false);
+        this.attemptReconnect();
+      };
 
-    handleDetectionResults(data) {
-        app.detections.set(data.cameraId, data);
-        ui.updateDetectionDisplay(data);
-    },
+      this.connection.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        ui.updateConnectionStatus(false);
+      };
 
-    handleSessionStatus(data) {
-        app.currentSession = data;
-        ui.updateSessionDisplay(data);
-    },
-
-    handleTrafficRedirection(data) {
-        ui.updateTrafficStatus(data);
-    },
-
-    handleCameraDisconnected(data) {
-        app.cameras.delete(data.id);
-        ui.removeCameraFromGrid(data.id);
-    },
-
-    attemptReconnect() {
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-            
-            setTimeout(() => {
-                this.connect();
-            }, this.reconnectDelay);
-        } else {
-            console.error('Max reconnection attempts reached');
-            ui.showConnectionError();
-        }
+      // Set binary type to arraybuffer for handling binary frames
+      this.connection.binaryType = "arraybuffer";
+    } catch (error) {
+      console.error("Failed to connect WebSocket:", error);
+      this.attemptReconnect();
     }
+  },
+
+  send(data) {
+    if (this.connection && this.connection.readyState === WebSocket.OPEN) {
+      this.connection.send(JSON.stringify(data));
+    }
+  },
+
+  handleMessage(event) {
+    // Handle text data (JSON)
+    try {
+      const data = JSON.parse(event.data);
+
+      switch (data.type) {
+        case "detection_results":
+          if (data.sessionId && data.detections) {
+            const accidents = data.detections.filter(
+              (d) => d.class_name === "accident"
+            );
+            if (accidents.length > 0) {
+              routeManager.handleAlert("accident");
+            }
+          }
+          break;
+        case "session_status":
+          if (data.status === "active" && !routeManager.activeRoute) {
+            routeManager.createNewRoute();
+          } else if (data.status === "completed") {
+            routeManager.reset();
+          }
+          break;
+        case "traffic_redirection":
+          this.handleTrafficRedirection(data);
+          break;
+
+        default:
+          console.log("Unknown message type:", data.type);
+      }
+    } catch (error) {
+      console.error("Error parsing WebSocket message:", error);
+    }
+  },
+
+  attemptReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(
+        `Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`
+      );
+
+      setTimeout(() => {
+        this.connect();
+      }, this.reconnectDelay);
+    } else {
+      console.error("Max reconnection attempts reached");
+      ui.showConnectionError();
+    }
+  }
 };
 
 // UI management
 const ui = {
-    updateConnectionStatus(connected) {
-        const status = document.getElementById('camera-status');
-        if (status) {
-            status.textContent = connected ? 'Connected to server' : 'Disconnected from server';
-            status.className = connected ? 'text-green-600 text-sm mr-3' : 'text-red-600 text-sm mr-3';
-        }
-    },
+  updateConnectionStatus(connected) {
+  },
 
-    updateCameraCount(count) {
-        const element = document.getElementById('cameras-count');
-        if (element) element.textContent = count;
-    },
-
-    addCameraToGrid(camera) {
-        const grid = document.getElementById('camera-feeds');
-        if (!grid) return;
-
-        // Check if camera already exists
-        const existingCard = document.getElementById(`camera-card-${camera.id}`);
-        if (existingCard) {
-            this.updateCameraCard(camera);
-            return;
-        }
-
-        const cameraCard = document.createElement('div');
-        cameraCard.id = `camera-card-${camera.id}`;
-        cameraCard.className = 'bg-gray-50 rounded-lg overflow-hidden shadow-sm border border-gray-200';
-        
-        cameraCard.innerHTML = `
-            <div class="relative">
-                <div id="video-container-${camera.id}" class="relative w-full h-48 bg-gray-200 flex items-center justify-center">
-                    <canvas id="video-stream-${camera.id}" 
-                         class="w-full h-full object-cover hidden"></canvas>
-                    <div id="video-placeholder-${camera.id}" class="flex flex-col items-center justify-center text-gray-500">
-                        <span class="material-icons text-4xl mb-2">videocam_off</span>
-                        <span class="text-sm">Connecting...</span>
-                    </div>
-                </div>
-                <div id="detection-overlay-${camera.id}" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
-                <div class="absolute top-2 right-2">
-                    <span id="status-${camera.id}" class="px-2 py-1 text-xs font-medium rounded bg-yellow-100 text-yellow-800">
-                        Connecting
-                    </span>
-                </div>
-                <div class="absolute bottom-2 right-2 bg-blue-600 bg-opacity-80 text-white text-xs px-2 py-1 rounded">
-                    <span id="fps-counter-${camera.id}">0 fps</span>
-                </div>
-            </div>
-            <div class="p-3">
-                <h4 class="font-medium text-gray-800 mb-1">Camera ${camera.id}</h4>
-                <div class="text-sm text-gray-600 space-y-1">
-                    <p>Location: ${camera.location || 'Unknown'}</p>
-                    <p>Status: <span id="connection-status-${camera.id}">Connecting</span></p>
-                    <p>Detections: <span id="detection-count-${camera.id}">0</span></p>
-                </div>
-            </div>
-        `;
-
-        grid.appendChild(cameraCard);
-        
-        // Initialize canvas context for this camera
-        const canvas = document.getElementById(`video-stream-${camera.id}`);
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            app.canvasContexts.set(camera.id, ctx);
-        }
-        
-        // Request a frame to start the stream
-        this.requestVideoFrame(camera.id);
-    },
-
-    updateCameraCard(camera) {
-        const statusElement = document.getElementById(`connection-status-${camera.id}`);
-        if (statusElement) {
-            statusElement.textContent = camera.connected ? 'Connected' : 'Disconnected';
-        }
-    },
-    
-    setupDirectVideoStream(camera) {
-        if (!camera.stream_url && !camera.ip_address) return;
-        
-        const canvasElement = document.getElementById(`video-stream-${camera.id}`);
-        const placeholder = document.getElementById(`video-placeholder-${camera.id}`);
-        const statusElement = document.getElementById(`status-${camera.id}`);
-        
-        if (!canvasElement || !placeholder || !statusElement) return;
-        
-        // Show we're ready to receive frames
-        placeholder.classList.add('hidden');
-        canvasElement.classList.remove('hidden');
-        statusElement.textContent = 'Live';
-        statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800';
-        
-        const connectionStatus = document.getElementById(`connection-status-${camera.id}`);
-        if (connectionStatus) connectionStatus.textContent = 'Live Stream';
-        
-        // Start FPS counter
-        this.startFpsCounter(camera.id);
-    },
-    
-    // Request a video frame for a specific camera
-    requestVideoFrame(cameraId) {
-        if (websocket.connection && websocket.connection.readyState === WebSocket.OPEN) {
-            websocket.send({
-                type: 'request_frame',
-                cameraId: cameraId
-            });
-        }
-    },
-    
-    // Update video frame on canvas
-    updateVideoFrame(cameraId, frameData) {
-        const ctx = app.canvasContexts.get(cameraId);
-        const canvasElement = document.getElementById(`video-stream-${cameraId}`);
-        const placeholder = document.getElementById(`video-placeholder-${cameraId}`);
-        const statusElement = document.getElementById(`status-${cameraId}`);
-        
-        if (!ctx || !canvasElement) return;
-        
-        // First time receiving a frame for this camera
-        if (placeholder && placeholder.classList.contains('hidden') === false) {
-            placeholder.classList.add('hidden');
-            canvasElement.classList.remove('hidden');
-            
-            if (statusElement) {
-                statusElement.textContent = 'Live';
-                statusElement.className = 'px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800';
-            }
-            
-            const connectionStatus = document.getElementById(`connection-status-${cameraId}`);
-            if (connectionStatus) connectionStatus.textContent = 'Live Stream';
-            
-            // Start FPS counter
-            this.startFpsCounter(cameraId);
-        }
-        
-        // Convert ArrayBuffer to blob
-        const blob = new Blob([frameData], {type: 'image/jpeg'});
-        
-        // Create an image from the blob and draw it on the canvas when loaded
-        const img = new Image();
-        img.onload = () => {
-            // Set canvas dimensions if needed
-            if (canvasElement.width !== img.width || canvasElement.height !== img.height) {
-                canvasElement.width = img.width;
-                canvasElement.height = img.height;
-            }
-            
-            ctx.drawImage(img, 0, 0);
-            
-            // Store frame timestamp for FPS calculation
-            if (!app.videoFrames.has(cameraId)) {
-                app.videoFrames.set(cameraId, []);
-            }
-            app.videoFrames.get(cameraId).push(Date.now());
-            
-            // Draw detection boxes if we have detections for this camera
-            const detectionData = app.detections.get(cameraId);
-            if (detectionData && detectionData.detections) {
-                this.drawDetectionBoxes(cameraId, detectionData.detections);
-            }
-            
-            // Request next frame
-            this.requestVideoFrame(cameraId);
-        };
-        
-        img.src = URL.createObjectURL(blob);
-    },
-    
-    // FPS counter for each camera
-    startFpsCounter(cameraId) {
-        if (!app.videoFrames.has(cameraId)) {
-            app.videoFrames.set(cameraId, []);
-        }
-        
-        // Update FPS every second
-        setInterval(() => {
-            const fpsElement = document.getElementById(`fps-counter-${cameraId}`);
-            if (!fpsElement) return;
-            
-            const frames = app.videoFrames.get(cameraId);
-            if (!frames || frames.length === 0) {
-                fpsElement.textContent = '0 fps';
-                return;
-            }
-            
-            // Calculate FPS based on frames received in last second
-            const now = Date.now();
-            const recentFrames = frames.filter(timestamp => now - timestamp < 1000);
-            
-            // Update the FPS counter
-            fpsElement.textContent = `${recentFrames.length} fps`;
-            
-            // Clean up old frame timestamps
-            app.videoFrames.set(cameraId, recentFrames);
-        }, 1000);
-    },
-
-    updateDetectionDisplay(data) {
-        const detectionCount = document.getElementById(`detection-count-${data.cameraId}`);
-        if (detectionCount) {
-            detectionCount.textContent = data.detections ? data.detections.length : 0;
-        }
-
-        // Update detection overlay directly on canvas
-        if (data.detections && data.detections.length > 0) {
-            this.drawDetectionBoxes(data.cameraId, data.detections);
-        }
-    },
-
-    drawDetectionBoxes(cameraId, detections) {
-        const canvas = document.getElementById(`video-stream-${cameraId}`);
-        const ctx = app.canvasContexts.get(cameraId);
-        
-        if (!canvas || !ctx) return;
-        
-        // Get canvas dimensions for proper scaling
-        const width = canvas.width;
-        const height = canvas.height;
-        
-        // Clear previous detection overlay by redrawing the frame
-        // (The next frame will already have been drawn by updateVideoFrame)
-        
-        // Draw new detection boxes
-        detections.forEach(detection => {
-            // Convert normalized coordinates to pixels
-            const x1 = detection.bbox[0] * width;
-            const y1 = detection.bbox[1] * height;
-            const x2 = detection.bbox[2] * width;
-            const y2 = detection.bbox[3] * height;
-            const boxWidth = x2 - x1;
-            const boxHeight = y2 - y1;
-            
-            // Draw bounding box
-            ctx.strokeStyle = detection.class_name === 'accident' ? '#FF0000' : '#00FF00';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x1, y1, boxWidth, boxHeight);
-            
-            // Draw label background
-            const label = `${detection.class_name} (${(detection.confidence * 100).toFixed(0)}%)`;
-            ctx.font = '12px Arial';
-            const textWidth = ctx.measureText(label).width;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.fillRect(x1, y1 - 18, textWidth + 6, 18);
-            
-            // Draw label text
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillText(label, x1 + 3, y1 - 5);
-        });
-    },
-
-    updateSessionDisplay(sessionData) {
-        console.log('Session status update:', sessionData);
-        // Implement session status display updates
-    },
-
-    updateTrafficStatus(trafficData) {
-        console.log('Traffic status update:', trafficData);
-        // Implement traffic status display updates
-    },
-
-    showConnectionError() {
-        const status = document.getElementById('camera-status');
-        if (status) {
-            status.textContent = 'Connection failed - please refresh page';
-            status.className = 'text-red-600 text-sm mr-3';
-        }
-    }
+  updateSessionDisplay(sessionData) {
+    console.log("Session status update:", sessionData);
+    // Implement session status display updates
+  }
 };
 
 // Event handlers
 const eventHandlers = {
-    init() {
-        // Camera section toggle
-        const showCamerasBtn = document.getElementById('show-cameras-btn');
-        const camerasSection = document.getElementById('cameras-section');
-        const closeCamerasBtn = document.getElementById('close-cameras');
+  init() {
 
-        if (showCamerasBtn && camerasSection) {
-            showCamerasBtn.addEventListener('click', () => {
-                camerasSection.classList.toggle('hidden');
-            });
-        }
+    // Sidebar toggle for mobile
+    const sidebarToggle = document.getElementById("sidebar-toggle");
+    const sidebar = document.getElementById("sidebar");
 
-        if (closeCamerasBtn && camerasSection) {
-            closeCamerasBtn.addEventListener('click', () => {
-                camerasSection.classList.add('hidden');
-            });
-        }
-
-        // Sidebar toggle for mobile
-        const sidebarToggle = document.getElementById('sidebar-toggle');
-        const sidebar = document.getElementById('sidebar');
-
-        if (sidebarToggle && sidebar) {
-            sidebarToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('hidden');
-            });
-        }
-
-        // Camera toggle button
-        const cameraToggle = document.getElementById('camera-toggle');
-        if (cameraToggle) {
-            cameraToggle.addEventListener('click', () => {
-                if (camerasSection) {
-                    camerasSection.classList.toggle('hidden');
-                }
-            });
-        }
+    if (sidebarToggle && sidebar) {
+      sidebarToggle.addEventListener("click", () => {
+        sidebar.classList.toggle("hidden");
+      });
     }
+  }
 };
 
 // Initialize application
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('Smart Road System - Initializing...');
-    
-    // Initialize event handlers
-    eventHandlers.init();
-    
-    // Connect WebSocket
-    websocket.connect();
-    
-    console.log('Smart Road System - Initialized');
-});
-
-// Initialize global variables
-let map,
-    markers = new Map(),
-    intersections = [],
-    routeLines = {},
-    activeRoutes = { visible: false },
-    path;
-
-// Document ready event
 document.addEventListener("DOMContentLoaded", () => {
+  console.log("Smart Road System - Initializing...");
+
   // Initialize map first
   initializeMap();
 
-  // API status elements
-  const apiStatusBanner = document.getElementById("api-status-banner");
-  const apiStatusDot = document.getElementById("api-status-dot");
-  const apiStatusText = document.getElementById("api-status-text");
-  const apiStatusIndicator = document.getElementById("api-status-indicator");
-  const apiStatusModal = document.getElementById("api-status-modal");
-  const apiModalClose = document.getElementById("api-modal-close");
-  const apiModalMessage = document.getElementById("api-modal-message");
+  // Initialize event handlers
+  eventHandlers.init();
 
-  // Show API status banner initially
-  apiStatusBanner.classList.remove("hidden");
+  // Connect WebSocket
+  websocket.connect();
 
-  // Close modal button
-  apiModalClose.addEventListener("click", () => {
-    apiStatusModal.classList.add("hidden");
-  });
-
-  // Setup event listeners for UI elements
-  setupUIEventListeners();
-  
-  // Function to check API status
-  function checkApiStatus() {
-    const apiUrl = "/health"; 
-
-    fetch(apiUrl)
-      .then((response) => response.json())
-      .then((data) => {
-        if (data.status === "healthy" && data.model_loaded) {
-          // API is ready
-          apiStatusBanner.classList.add("hidden");
-          apiStatusDot.classList.remove("bg-yellow-400", "bg-red-500");
-          apiStatusDot.classList.add("bg-green-500");
-          apiStatusDot.classList.remove("pulse");
-          apiStatusText.textContent = "API Ready";
-          apiStatusText.classList.remove("text-yellow-700", "text-red-700");
-          apiStatusText.classList.add("text-green-700");
-          apiStatusIndicator.classList.remove("bg-yellow-50", "bg-red-50");
-          apiStatusIndicator.classList.add("bg-green-50");
-        }
-      })
-      .catch(() => {
-        // API is not available
-        apiStatusBanner.classList.remove("hidden");
-        apiStatusDot.classList.remove("bg-yellow-400", "bg-green-500");
-        apiStatusDot.classList.add("bg-red-500", "pulse");
-        apiStatusText.textContent = "API Offline";
-        apiStatusText.classList.remove("text-yellow-700", "text-green-700");
-        apiStatusText.classList.add("text-red-700");
-        apiStatusIndicator.classList.remove("bg-yellow-50", "bg-green-50");
-        apiStatusIndicator.classList.add("bg-red-50");
-
-        // Show modal after a delay if API is still offline
-        setTimeout(() => {
-          if (apiStatusText.textContent === "API Offline") {
-            apiStatusModal.classList.remove("hidden");
-            apiModalMessage.innerHTML = `
-              <strong class="text-red-600">The traffic detection service is currently offline.</strong><br><br>
-              Traffic analysis and vehicle detection require the AI service to be running.<br><br>
-              Please check that the Python AI service has started properly.
-            `;
-          }
-        }, 5000);
-      });
-  }
-
-  // Check status initially after a delay
-  setTimeout(checkApiStatus, 2000);
-
-  // Check periodically
-  setInterval(checkApiStatus, 10000);
-
-  // Update time display
-  setInterval(() => {
-    document.getElementById("current-time").textContent = new Date().toLocaleTimeString(
-      [], 
-      {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit"
-      }
-    );
-  }, 1000);
+  console.log("Smart Road System - Initialized");
 });
 
-function setupUIEventListeners() {
-  // Close buttons setup
-  document.getElementById("close-cameras")?.addEventListener("click", () => {
-    document.getElementById("cameras-section").classList.add("hidden");
-  });
+// Define key road intersections in Eldoret
+const ELDORET_INTERSECTIONS = {
+  center: [0.5167, 35.2833], // CBD
+  uganda_road: [0.5142, 35.2697],
+  iten_road: [0.5138, 35.271],
+  kisumu_road: [0.5132, 35.2725],
+  kaptagat_road: [0.5126, 35.274]
+};
 
-  document.getElementById("close-detail")?.addEventListener("click", () => {
-    document.getElementById("intersection-detail").classList.add("hidden");
-  });
+// Define main road networks
+const ROAD_NETWORKS = {
+  main_roads: [
+    // Uganda Road
+    [[0.5167, 35.2833], [0.5142, 35.2697]],
+    // Iten Road
+    [[0.5167, 35.2833], [0.5138, 35.271]],
+    // Kisumu Road
+    [[0.5167, 35.2833], [0.5132, 35.2725]],
+    // Kaptagat Road
+    [[0.5167, 35.2833], [0.5126, 35.274]]
+  ],
+  alternative_roads: [
+    // Alternative route 1 (via residential areas)
+    [[0.5167, 35.2833], [0.5155, 35.2725], [0.5142, 35.2697]],
+    // Alternative route 2 (via bypass)
+    [[0.5167, 35.2833], [0.5175, 35.2745], [0.5132, 35.2725]],
+    // Alternative route 3 (via industrial area)
+    [[0.5167, 35.2833], [0.5145, 35.2815], [0.5126, 35.274]]
+  ]
+};
 
-  // Camera toggle button
-  document.getElementById("camera-toggle")?.addEventListener("click", function() {
-    // Toggle camera logic would go here
-    alert("Camera connection feature would activate here");
-  });
+// Route management
+const routeManager = {
+  activeRoute: null,
+  alternativeRoute: null,
+  isAlertActive: false,
+  routeColors: {
+    normal: "#3b82f6",
+    alert: "#dc2626",
+    alternative: "#16a34a"
+  },
 
-  // Sidebar toggle for mobile
-  document.getElementById("sidebar-toggle")?.addEventListener("click", function() {
-    const sidebar = document.getElementById("sidebar");
-    sidebar.classList.toggle("hidden");
-  });
-}
+  async createNewRoute() {
+    // Clear existing routes
+    if (this.activeRoute) app.map.removeLayer(this.activeRoute);
+    if (this.alternativeRoute) app.map.removeLayer(this.alternativeRoute);
+    // Remove existing markers
+    if (this.startMarker) app.map.removeLayer(this.startMarker);
+    if (this.endMarker) app.map.removeLayer(this.endMarker);
 
+    // Select a random main road
+    const randomRoadIndex = Math.floor(Math.random() * ROAD_NETWORKS.main_roads.length);
+    const selectedRoad = ROAD_NETWORKS.main_roads[randomRoadIndex];
+
+    try {
+      const start = selectedRoad[0];
+      const end = selectedRoad[selectedRoad.length - 1];
+      const routePoints = await this.getOSRMRoute(start, end);
+
+      // Create animated route line
+      this.activeRoute = L.polyline(routePoints, {
+        color: this.routeColors.normal,
+        weight: 5,
+        opacity: 0.8,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dashArray: '10, 15',
+        className: 'route-path-animation'
+      }).addTo(app.map);
+
+      // Add start marker
+      this.startMarker = L.marker(routePoints[0], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon start-marker',
+          html: '<div class="marker-content"><span class="material-icons">trip_origin</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        })
+      }).addTo(app.map);
+
+      // Add end marker
+      this.endMarker = L.marker(routePoints[routePoints.length - 1], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon end-marker',
+          html: '<div class="marker-content"><span class="material-icons">place</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 30]
+        })
+      }).addTo(app.map);
+
+      // Fit map to show the route
+      app.map.fitBounds(this.activeRoute.getBounds(), { padding: [50, 50] });
+
+      return routePoints;
+    } catch (error) {
+      console.error('Error creating route:', error);
+      // Fallback to direct polyline if OSRM fails
+      this.activeRoute = L.polyline(selectedRoad, {
+        color: this.routeColors.normal,
+        weight: 5,
+        opacity: 0.8,
+        dashArray: '10, 15',
+        className: 'route-path-animation'
+      }).addTo(app.map);
+
+      // Add markers even in fallback mode
+      this.startMarker = L.marker(selectedRoad[0], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon start-marker',
+          html: '<div class="marker-content"><span class="material-icons">trip_origin</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        })
+      }).addTo(app.map);
+
+      this.endMarker = L.marker(selectedRoad[selectedRoad.length - 1], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon end-marker',
+          html: '<div class="marker-content"><span class="material-icons">place</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 30]
+        })
+      }).addTo(app.map);
+
+      app.map.fitBounds(this.activeRoute.getBounds(), { padding: [50, 50] });
+      return selectedRoad;
+    }
+  },
+
+  async createAlternativeRoute(originalPoints) {
+    // Find nearest alternative road based on start point
+    const start = originalPoints[0];
+    const end = originalPoints[originalPoints.length - 1];
+    
+    // Find closest alternative route
+    const alternativeRoute = this.findNearestAlternativeRoute(start, end);
+
+    try {
+      // Get actual route using OSRM
+      const routePoints = await this.getOSRMRoute(alternativeRoute[0], alternativeRoute[alternativeRoute.length - 1]);
+
+      this.alternativeRoute = L.polyline(routePoints, {
+        color: this.routeColors.alternative,
+        weight: 5,
+        opacity: 0.8,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dashArray: '10, 15',
+        className: 'route-path-animation alternative-route'
+      }).addTo(app.map);
+
+      return routePoints;
+    } catch (error) {
+      console.error('Error creating alternative route:', error);
+      // Fallback to direct polyline
+      this.alternativeRoute = L.polyline(alternativeRoute, {
+        color: this.routeColors.alternative,
+        weight: 5,
+        opacity: 0.8,
+        dashArray: '10, 15',
+        className: 'route-path-animation'
+      }).addTo(app.map);
+      return alternativeRoute;
+    }
+  },
+
+  // Get actual road route using OSRM
+  async getOSRMRoute(start, end) {
+    const response = await fetch(
+      `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`
+    );
+    const data = await response.json();
+    
+    if (data.code === 'Ok' && data.routes.length > 0) {
+      // Convert coordinates from [lon, lat] to [lat, lon] for Leaflet
+      return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+    }
+    throw new Error('No route found');
+  },
+
+  // Find nearest alternative route based on start and end points
+  findNearestAlternativeRoute(start, end) {
+    let nearestRoute = ROAD_NETWORKS.alternative_roads[0];
+    let shortestDistance = Infinity;
+
+    ROAD_NETWORKS.alternative_roads.forEach(route => {
+      const startDistance = this.getDistance(start, route[0]);
+      const endDistance = this.getDistance(end, route[route.length - 1]);
+      const totalDistance = startDistance + endDistance;
+
+      if (totalDistance < shortestDistance) {
+        shortestDistance = totalDistance;
+        nearestRoute = route;
+      }
+    });
+
+    return nearestRoute;
+  },
+
+  // Calculate distance between two points (Haversine formula)
+  getDistance(point1, point2) {
+    const R = 6371; // Earth's radius in km
+    const dLat = this.toRad(point2[0] - point1[0]);
+    const dLon = this.toRad(point2[1] - point1[1]);
+    const lat1 = this.toRad(point1[0]);
+    const lat2 = this.toRad(point2[0]);
+
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.sin(dLon/2) * Math.sin(dLon/2) * Math.cos(lat1) * Math.cos(lat2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  },
+
+  toRad(value) {
+    return value * Math.PI / 180;
+  },
+
+  handleAlert(type) {
+    if (!this.activeRoute || this.isAlertActive) return;
+
+    this.isAlertActive = true;
+
+    // Change original route color to red
+    this.activeRoute.setStyle({ color: this.routeColors.alert });
+
+    // Create alternative route if none exists
+    if (!this.alternativeRoute) {
+      const originalPoints = this.activeRoute.getLatLngs();
+      this.createAlternativeRoute(originalPoints);
+    }
+
+    // Add alert to the UI
+    const alertsContainer = document.getElementById("alerts-container");
+    const alertDiv = document.createElement("div");
+    alertDiv.className = "bg-red-50 border-l-4 border-red-500 p-4 mb-3";
+    alertDiv.innerHTML = `
+      <div class="flex items-center">
+        <span class="material-icons text-red-500 mr-2">warning</span>
+        <div>
+          <h4 class="text-red-800 font-medium">${
+            type === "threshold"
+              ? "Traffic Threshold Exceeded"
+              : "Accident Detected"
+          }</h4>
+          <p class="text-red-600 text-sm">Alternative route suggested</p>
+        </div>
+      </div>
+    `;
+    alertsContainer.innerHTML = ""; // Clear existing alerts
+    alertsContainer.appendChild(alertDiv);
+  },
+
+  reset() {
+    this.isAlertActive = false;
+    if (this.activeRoute) {
+      this.activeRoute.setStyle({ color: this.routeColors.normal });
+    }
+    if (this.alternativeRoute) {
+      app.map.removeLayer(this.alternativeRoute);
+      this.alternativeRoute = null;
+    }
+    // Remove markers
+    if (this.startMarker) {
+      app.map.removeLayer(this.startMarker);
+      this.startMarker = null;
+    }
+    if (this.endMarker) {
+      app.map.removeLayer(this.endMarker);
+      this.endMarker = null;
+    }
+
+    // Clear alerts
+    const alertsContainer = document.getElementById("alerts-container");
+    alertsContainer.innerHTML = `
+      <div class="flex items-center justify-center py-4 text-gray-500 text-sm">
+        No alerts at this time
+      </div>
+    `;
+  }
+};
+
+
+// Update the map initialization
 function initializeMap() {
-  const defaultLocation = [-1.2921, 36.8219];
+  const eldoretLocation = [0.5167, 35.2833];
 
-  // Create Leaflet map
-  map = L.map("map", {
-    zoomControl: false,
-    attributionControl: false
-  }).setView(defaultLocation, 15);
+  // Initialize the map with full functionality
+  app.map = L.map("map", {
+    zoomControl: true,
+    attributionControl: true,
+    minZoom: 12 // Restrict zoom out level
+  }).setView(eldoretLocation, 15);
 
-  // Use a dark-themed tile layer (Carto Dark Matter as base)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  // Use OpenStreetMap tile layer for better coverage of Eldoret
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap contributors",
     maxZoom: 19
-  }).addTo(map);
+  }).addTo(app.map);
 
-  // Neon green route line
-  path = L.polyline([], {
-    color: '#39ff14',  // neon green
+  // Add scale control
+  L.control.scale().addTo(app.map);
+
+  // Update coordinates display on mouse move
+  app.map.on("mousemove", (e) => {
+    const coords = document.getElementById("map-coordinates");
+    coords.textContent = `LAT: ${e.latlng.lat.toFixed(
+      6
+    )} LNG: ${e.latlng.lng.toFixed(6)}`;
+  });
+
+
+
+  // Route polyline
+  const path = L.polyline([], {
+    color: "#39ff14", // Neon green
     weight: 5,
     opacity: 0.9
-  }).addTo(map);
+  }).addTo(app.map);
 
-  // Add futuristic styles
-  const mapStyleElement = document.createElement('style');
+  // Custom styling
+  const mapStyleElement = document.createElement("style");
   mapStyleElement.textContent = `
     .leaflet-container {
-      background-color: #0d0d0d; /* deep dark background */
-      border: 2px solid #00ff99;
+      background-color: #f8f8f8;
+      border: 2px solid #00cc99;
       border-radius: 12px;
-      box-shadow: 0 0 20px #00ffcc;
-      color: #00ffcc;
+      box-shadow: 0 0 15px #00ffcc;
+      color: #222;
     }
 
     .leaflet-tile-pane {
-      filter: saturate(1.5) contrast(1.3) brightness(0.9);
+      filter: saturate(1.1) contrast(1.05);
     }
 
     .leaflet-control-zoom a {
-      background-color: #1f1f1f;
-      color: #00ffcc;
-      border: 1px solid #00ffcc;
+      background-color: #fff;
+      color: #00aa88;
+      border: 1px solid #00aa88;
     }
 
     .leaflet-control-zoom a:hover {
-      background-color: #00ffcc;
-      color: #000;
+      background-color: #00aa88;
+      color: #fff;
     }
 
     #map-coordinates {
       font-family: "Courier New", monospace;
-      color: #00ffcc;
-      background: rgba(0, 0, 0, 0.6);
+      color: #00aa88;
+      background: rgba(255, 255, 255, 0.8);
       padding: 4px 8px;
       border-radius: 6px;
       position: absolute;
@@ -689,45 +516,97 @@ function initializeMap() {
     }
 
     .route-path-animation {
-      stroke-dasharray: 6, 12;
-      animation: dash 20s linear infinite;
+      stroke-dasharray: 10, 15;
+      animation: dash 30s linear infinite;
+    }
+
+    .alternative-route {
+      animation: dash 30s linear infinite reverse;
+    }
+
+    .custom-marker-icon {
+      background: none;
+      border: none;
+    }
+
+    .marker-content {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    .start-marker .marker-content {
+      color: #16a34a;
+      filter: drop-shadow(0 0 6px rgba(22, 163, 74, 0.5));
+    }
+
+    .end-marker .marker-content {
+      color: #dc2626;
+      filter: drop-shadow(0 0 6px rgba(220, 38, 38, 0.5));
+    }
+
+    .start-marker .material-icons,
+    .end-marker .material-icons {
+      font-size: 24px;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
     }
 
     @keyframes dash {
       to {
-        stroke-dashoffset: -1000;
+        stroke-dashoffset: -50;
       }
     }
   `;
   document.head.appendChild(mapStyleElement);
 
   // Controls
-  L.control.zoom({ position: "topright" }).addTo(map);
-  L.control.attribution({ position: "bottomright", prefix: false }).addTo(map);
+  L.control.zoom({ position: "topright" }).addTo(app.map);
+  L.control
+    .attribution({ position: "bottomright", prefix: false })
+    .addTo(app.map);
 
-  // Display coordinates
-  map.on("mousemove", (e) => {
-    document.getElementById("map-coordinates").innerText = 
-      `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(6)}`;
+  // Coordinate display
+  app.map.on("mousemove", (e) => {
+    document.getElementById(
+      "map-coordinates"
+    ).innerText = `LAT: ${e.latlng.lat.toFixed(6)} LNG: ${e.latlng.lng.toFixed(
+      6
+    )}`;
   });
+
+  // Add WebSocket message handler
+  if (websocket.connection) {
+    websocket.connection.addEventListener("message", handleWebSocketMessage);
+  }
 
   // Map hooks
   setupMapEventListeners();
-  addSampleIntersections();
-  addRouteLines();
   fixMapDisplay();
 }
 
 function setupMapEventListeners() {
-  document.getElementById("map-fullscreen-btn").addEventListener("click", toggleFullscreen);
-  document.getElementById("show-routes-btn").addEventListener("click", toggleRouteLines);
-  document.getElementById("toggle-route-planner-btn").addEventListener("click", toggleRoutePlanner);
-  document.getElementById("close-route-planner").addEventListener("click", () => {
-    document.getElementById("route-planner-panel").classList.add("hidden");
-  });
-  document.getElementById("calculate-route-btn").addEventListener("click", calculateAndDisplayRoute);
-  document.getElementById("pick-start-point").addEventListener("click", () => enableMapPointSelection("start"));
-  document.getElementById("pick-end-point").addEventListener("click", () => enableMapPointSelection("end"));
+  document
+    .getElementById("map-fullscreen-btn")
+    .addEventListener("click", toggleFullscreen);
+  document
+    .getElementById("toggle-route-planner-btn")
+    .addEventListener("click", toggleRoutePlanner);
+  document
+    .getElementById("close-route-planner")
+    .addEventListener("click", () => {
+      document.getElementById("route-planner-panel").classList.add("hidden");
+    });
+  document
+    .getElementById("calculate-route-btn")
+    .addEventListener("click", calculateAndDisplayRoute);
+  document
+    .getElementById("pick-start-point")
+    .addEventListener("click", () => enableMapPointSelection("start"));
+  document
+    .getElementById("pick-end-point")
+    .addEventListener("click", () => enableMapPointSelection("end"));
 }
 
 // Route planning functionality
@@ -746,8 +625,19 @@ function toggleRoutePlanner() {
 }
 
 function populateLocationDropdowns() {
-  const startSelect = document.getElementById("start-point");
-  const endSelect = document.getElementById("end-point");
+  const startSelect =
+    document.getElementById("start-point") || document.createElement("select");
+  const endSelect =
+    document.getElementById("end-point") || document.createElement("select");
+
+  // Return if elements don't exist
+  if (
+    !document.getElementById("start-point") ||
+    !document.getElementById("end-point")
+  ) {
+    console.warn("Route planner dropdown elements not found");
+    return;
+  }
 
   // Clear existing options (except the first one)
   while (startSelect.options.length > 1) startSelect.options.remove(1);
@@ -787,7 +677,7 @@ function enableMapPointSelection(pointType) {
   mapSelectionMode = pointType;
 
   // Update cursor and show helper message
-  map.getContainer().style.cursor = "crosshair";
+  app.map.getContainer().style.cursor = "crosshair";
 
   // Show a notification to the user
   const apiStatusBanner = document.getElementById("api-status-banner");
@@ -795,14 +685,18 @@ function enableMapPointSelection(pointType) {
   apiStatusBanner.classList.add("bg-blue-500");
   apiStatusBanner.innerHTML = `<div class="container mx-auto px-4 flex items-center justify-center gap-2">
     <span class="material-icons text-sm">place</span>
-    <span>Click on the map to select ${pointType === "start" ? "starting point" : "destination"}</span>
+    <span>Click on the map to select ${
+      pointType === "start" ? "starting point" : "destination"
+    }</span>
     <button id="cancel-selection" class="ml-4 bg-white bg-opacity-20 px-2 py-1 rounded text-xs">Cancel</button>
   </div>`;
 
-  document.getElementById("cancel-selection").addEventListener("click", cancelMapPointSelection);
+  document
+    .getElementById("cancel-selection")
+    .addEventListener("click", cancelMapPointSelection);
 
   // Add one-time click handler to the map
-  map.once("click", function (e) {
+  app.map.once("click", function (e) {
     setRoutePoint(pointType, [e.latlng.lat, e.latlng.lng]);
     cancelMapPointSelection();
   });
@@ -818,12 +712,14 @@ function cancelMapPointSelection() {
 function setRoutePoint(pointType, coordinates, name = null) {
   // Remove existing marker if any
   if (routeMarkers[pointType]) {
-    map.removeLayer(routeMarkers[pointType]);
+    app.map.removeLayer(routeMarkers[pointType]);
   }
 
   // Create marker icon based on point type
   const markerIcon = L.divIcon({
-    className: `shadow-lg rounded-full bg-${pointType === "start" ? "green" : "red"}-600 flex items-center justify-center border-2 border-white`,
+    className: `shadow-lg rounded-full bg-${
+      pointType === "start" ? "green" : "red"
+    }-600 flex items-center justify-center border-2 border-white`,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
     html: `<span class="material-icons" style="font-size: 16px; color: white;">
@@ -835,7 +731,7 @@ function setRoutePoint(pointType, coordinates, name = null) {
   routeMarkers[pointType] = L.marker(coordinates, {
     icon: markerIcon,
     draggable: true
-  }).addTo(map);
+  }).addTo(app.map);
 
   // Set popup content
   const popupContent = `<div class="font-medium p-1">
@@ -844,7 +740,7 @@ function setRoutePoint(pointType, coordinates, name = null) {
     </div>
     ${name ? "<div class='text-gray-600 text-sm'>" + name + "</div>" : ""}
   </div>`;
-  
+
   routeMarkers[pointType].bindPopup(popupContent);
 
   // Update dropdown selection if using a custom point
@@ -858,7 +754,7 @@ function setRoutePoint(pointType, coordinates, name = null) {
       calculateAndDisplayRoute();
     }
   });
-  
+
   // If both markers are set, calculate route
   if (routeMarkers.start && routeMarkers.end) {
     calculateAndDisplayRoute();
@@ -874,13 +770,13 @@ function calculateAndDisplayRoute() {
 
   // Remove existing route if any
   if (currentRoutePolyline) {
-    map.removeLayer(currentRoutePolyline);
+    app.map.removeLayer(currentRoutePolyline);
   }
 
   // Get coordinates
   const startPoint = routeMarkers.start.getLatLng();
   const endPoint = routeMarkers.end.getLatLng();
-  
+
   // Show loading indicator
   const apiStatusBanner = document.getElementById("api-status-banner");
   apiStatusBanner.classList.remove("hidden");
@@ -889,211 +785,57 @@ function calculateAndDisplayRoute() {
     <span class="material-icons text-sm animate-spin">sync</span>
     <span>Calculating best route...</span>
   </div>`;
-  
+
   // Use OSRM API to get actual road routes
   const osrmAPI = `https://router.project-osrm.org/route/v1/driving/${startPoint.lng},${startPoint.lat};${endPoint.lng},${endPoint.lat}?overview=full&geometries=geojson`;
-  
+
   fetch(osrmAPI)
-    .then(response => response.json())
-    .then(data => {
+    .then((response) => response.json())
+    .then((data) => {
       apiStatusBanner.classList.add("hidden");
-      
-      if (data.code === 'Ok' && data.routes.length > 0) {
+
+      if (data.code === "Ok" && data.routes.length > 0) {
         // Get the coordinates from the route
-        const routeCoordinates = data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
-        
+        const routeCoordinates = data.routes[0].geometry.coordinates.map(
+          (coord) => [coord[1], coord[0]]
+        );
+
         // Create route polyline with animation effect
         currentRoutePolyline = L.polyline(routeCoordinates, {
-          color: '#3b82f6',
+          color: "#3b82f6",
           weight: 5,
           opacity: 0.8,
-          lineCap: 'round',
-          lineJoin: 'round',
-          className: 'route-path-animation'
-        }).addTo(map);
-        
+          lineCap: "round",
+          lineJoin: "round",
+          className: "route-path-animation"
+        }).addTo(app.map);
+
         // Add route info
         const duration = Math.round(data.routes[0].duration / 60); // minutes
         const distance = (data.routes[0].distance / 1000).toFixed(1); // km
-        
-        currentRoutePolyline.bindTooltip(`
+
+        currentRoutePolyline.bindTooltip(
+          `
           <div class="font-medium text-sm">
             <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
             <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
           </div>
-        `, {sticky: true});
-        
+        `,
+          { sticky: true }
+        );
+
         // Fit map bounds to show the entire route
-        map.fitBounds(currentRoutePolyline.getBounds(), {
+        app.map.fitBounds(currentRoutePolyline.getBounds(), {
           padding: [50, 50]
         });
       } else {
-        alert('Unable to calculate route. Please try different points.');
+        alert("Unable to calculate route. Please try different points.");
       }
     })
-    .catch(error => {
+    .catch((error) => {
       apiStatusBanner.classList.add("hidden");
-      alert('Error calculating route: ' + error.message);
+      alert("Error calculating route: " + error.message);
     });
-}
-
-function addSampleIntersections() {
-  intersections = [
-    {
-      id: "int1",
-      name: "Main St & Central Ave",
-      lat: 0.513,
-      lng: 35.27,
-      status: "green",
-      cameras: ["cam1"]
-    },
-    {
-      id: "int2",
-      name: "Highway 101 & Oak St",
-      lat: 0.514,
-      lng: 35.272,
-      status: "yellow",
-      cameras: ["cam2"]
-    },
-    {
-      id: "int3",
-      name: "Industrial Rd & Pine Ave",
-      lat: 0.5125,
-      lng: 35.275,
-      status: "red",
-      cameras: ["cam3"]
-    }
-  ];
-
-  intersections.forEach((intersection) => {
-    addIntersectionMarker(intersection);
-  });
-
-  // Update counts
-  document.getElementById("cameras-count").textContent = intersections.length;
-
-  const congestedCount = intersections.filter((i) => i.status === "red").length;
- 
-}
-
-function addIntersectionMarker(intersection) {
-  const icon = createIntersectionIcon(intersection.status);
-
-  const marker = L.marker([intersection.lat, intersection.lng], {
-    icon,
-    title: intersection.name
-  }).addTo(map);
-
-  marker.bindPopup(createIntersectionPopup(intersection));
-  markers.set(intersection.id, marker);
-}
-
-function createIntersectionIcon(status) {
-  const statusClass =
-    status === "red"
-      ? "bg-red-600"
-      : status === "yellow"
-      ? "bg-yellow-500"
-      : "bg-green-600";
-
-  return L.divIcon({
-    className: `rounded-full ${statusClass} flex items-center justify-center`,
-    iconSize: [24, 24],
-    html: '<span class="material-icons" style="font-size: 14px; color: white;">traffic</span>'
-  });
-}
-
-function createIntersectionPopup(intersection) {
-  const statusColor =
-    intersection.status === "red"
-      ? "text-red-600"
-      : intersection.status === "yellow"
-      ? "text-yellow-600"
-      : "text-green-600";
-
-  return `
-    <div class="popup-content">
-      <div class="font-semibold text-gray-800">${intersection.name}</div>
-      <div class="mt-2 text-sm">
-        <div class="flex items-center mb-1">
-          <span class="material-icons mr-1 ${statusColor}" style="font-size: 16px;">circle</span>
-          <span class="font-medium ${statusColor}">Traffic: ${intersection.status.toUpperCase()}</span>
-        </div>
-        <div class="flex items-center">
-          <span class="material-icons mr-1 text-gray-600" style="font-size: 14px;">videocam</span>
-          <span class="text-gray-600">Camera: ${intersection.cameras ? intersection.cameras[0] : "None"}</span>
-        </div>
-      </div>
-      <button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 mt-3 text-xs rounded-full" 
-              onclick="showIntersectionDetails('${intersection.id}')">View Analysis</button>
-    </div>
-  `;
-}
-
-function addRouteLines() {
-  // Main Highway Route (red)
-  const route1Coords = [
-    [0.5142, 35.2697],
-    [0.5138, 35.271],
-    [0.5132, 35.2725],
-    [0.5126, 35.274],
-    [0.5123, 35.2755]
-  ];
-
-  // Alternate Bypass Route (green)
-  const route2Coords = [
-    [0.5142, 35.2697],
-    [0.515, 35.271],
-    [0.5155, 35.2725],
-    [0.5145, 35.274],
-    [0.5123, 35.2755]
-  ];
-
-  const route1Line = L.polyline(route1Coords, {
-    color: "#dc2626",
-    weight: 4,
-    opacity: 0.8,
-    lineCap: "round",
-    lineJoin: "round"
-  });
-
-  const route2Line = L.polyline(route2Coords, {
-    color: "#16a34a",
-    weight: 4,
-    opacity: 0.8,
-    lineCap: "round",
-    lineJoin: "round",
-    dashArray: "10, 10"
-  });
-
-  routeLines = {
-    "route-1": route1Line,
-    "route-2": route2Line
-  };
-}
-
-function toggleRouteLines() {
-  const routeVisible = !activeRoutes.visible;
-  activeRoutes.visible = routeVisible;
-
-  Object.values(routeLines).forEach((line) => {
-    if (routeVisible) {
-      if (!map.hasLayer(line)) {
-        map.addLayer(line);
-      }
-    } else {
-      if (map.hasLayer(line)) {
-        map.removeLayer(line);
-      }
-    }
-  });
-
-  const btn = document.getElementById("show-routes-btn");
-  if (btn) {
-    btn.innerHTML = routeVisible
-      ? '<span class="material-icons text-sm mr-1">visibility_off</span> Hide Routes'
-      : '<span class="material-icons text-sm mr-1">alt_route</span> Routes';
-  }
 }
 
 function toggleFullscreen() {
@@ -1127,35 +869,16 @@ function toggleFullscreen() {
   }
 
   setTimeout(() => {
-    map.invalidateSize();
+    app.map.invalidateSize();
   }, 100);
-}
-
-
-function showIntersectionDetails(intersectionId) {
-  const intersection = intersections.find((i) => i.id === intersectionId);
-  if (intersection) {
-    const detailSection = document.getElementById("intersection-detail");
-    document.getElementById("detail-title").innerHTML = `
-      <span class="material-icons text-primary mr-1">traffic</span>
-      <span>${intersection.name}</span>
-    `;
-    document.getElementById("detail-density").textContent = intersection.status.toUpperCase();
-    document.getElementById("detail-vehicles").textContent = Math.floor(Math.random() * 20) + 5;
-
-    detailSection.classList.remove("hidden");
-  }
 }
 
 function fixMapDisplay() {
   window.addEventListener("resize", () => {
-    map.invalidateSize();
+    app.map.invalidateSize();
   });
 
   setTimeout(() => {
-    map.invalidateSize();
+    app.map.invalidateSize();
   }, 500);
 }
-
-// Make the showIntersectionDetails function globally available for the onClick in the popup
-window.showIntersectionDetails = showIntersectionDetails;
