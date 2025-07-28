@@ -272,7 +272,7 @@ def decode_base64_image(image_string: str):
         logger.error(f"Exception in decode_base64_image: {e}")
         return None
 
-async def process_image(image_data, confidence_threshold=0.01, camera_id=None):  
+async def process_image(image_data, confidence_threshold=0.95, camera_id=None):  
     import cv2
     import numpy as np
     import time
