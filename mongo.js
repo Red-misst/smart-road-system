@@ -38,7 +38,8 @@ const SessionSchema = new mongoose.Schema({
   endTime: { type: Date, default: null },
   duration: { type: Number, required: true },
   count: { type: Number, required: true },
-  status: { type: String, enum: ['active', 'completed'], default: 'active' }
+  status: { type: String, enum: ['active', 'completed'], default: 'active' },
+  smsCounters: { type: Map, of: Number, default: {} } // Add this line
 });
 
 // Create models

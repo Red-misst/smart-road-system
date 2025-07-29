@@ -193,6 +193,9 @@ const ROAD_NETWORKS = {
 const routeManager = {
   activeRoute: null,
   alternativeRoute: null,
+  userSelectedRoute: null,
+  startMarker: null,
+  endMarker: null,
   isAlertActive: false,
   routeColors: {
     normal: "#3b82f6",
@@ -201,56 +204,33 @@ const routeManager = {
   },
 
   async createNewRoute() {
-    // Clear existing routes
+    // Clear existing routes and markers
     if (this.activeRoute) app.map.removeLayer(this.activeRoute);
     if (this.alternativeRoute) app.map.removeLayer(this.alternativeRoute);
-    // Remove existing markers
     if (this.startMarker) app.map.removeLayer(this.startMarker);
     if (this.endMarker) app.map.removeLayer(this.endMarker);
 
-    // Select a random main road
-    const randomRoadIndex = Math.floor(Math.random() * ROAD_NETWORKS.main_roads.length);
-    const selectedRoad = ROAD_NETWORKS.main_roads[randomRoadIndex];
+    let start, end;
+
+    // Check for user-selected route points first
+    if (routeMarkers && routeMarkers.start && routeMarkers.end) {
+      const startLatLng = routeMarkers.start.getLatLng();
+      const endLatLng = routeMarkers.end.getLatLng();
+      start = [startLatLng.lat, startLatLng.lng];
+      end = [endLatLng.lat, endLatLng.lng];
+      this.userSelectedRoute = { start, end };
+    } else {
+      // Fall back to random route if no user selection
+      const randomRoadIndex = Math.floor(Math.random() * ROAD_NETWORKS.main_roads.length);
+      const selectedRoad = ROAD_NETWORKS.main_roads[randomRoadIndex];
+      start = selectedRoad[0];
+      end = selectedRoad[selectedRoad.length - 1];
+      this.userSelectedRoute = null;
+    }
 
     try {
-      const start = selectedRoad[0];
-      const end = selectedRoad[selectedRoad.length - 1];
       const routePoints = await this.getOSRMRoute(start, end);
-
-      // Create animated route line
-      this.activeRoute = L.polyline(routePoints, {
-        color: this.routeColors.normal,
-        weight: 5,
-        opacity: 0.8,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: '10, 15',
-        className: 'route-path-animation'
-      }).addTo(app.map);
-
-      // Add start marker
-      this.startMarker = L.marker(routePoints[0], {
-        icon: L.divIcon({
-          className: 'custom-marker-icon start-marker',
-          html: '<div class="marker-content"><span class="material-icons">trip_origin</span></div>',
-          iconSize: [30, 30],
-          iconAnchor: [15, 15]
-        })
-      }).addTo(app.map);
-
-      // Add end marker
-      this.endMarker = L.marker(routePoints[routePoints.length - 1], {
-        icon: L.divIcon({
-          className: 'custom-marker-icon end-marker',
-          html: '<div class="marker-content"><span class="material-icons">place</span></div>',
-          iconSize: [30, 30],
-          iconAnchor: [15, 30]
-        })
-      }).addTo(app.map);
-
-      // Fit map to show the route
-      app.map.fitBounds(this.activeRoute.getBounds(), { padding: [50, 50] });
-
+      this.activeRoute = await this.createRouteWithPoints(routePoints);
       return routePoints;
     } catch (error) {
       console.error('Error creating route:', error);
@@ -287,7 +267,48 @@ const routeManager = {
     }
   },
 
-  async createAlternativeRoute(originalPoints) {
+  // Helper method to create route with given points
+  async createRouteWithPoints(routePoints, isAlternative = false) {
+    const routeColor = isAlternative ? this.routeColors.alternative : this.routeColors.normal;
+    const routeLine = L.polyline(routePoints, {
+      color: routeColor,
+      weight: 5,
+      opacity: 0.8,
+      lineCap: 'round',
+      lineJoin: 'round',
+      dashArray: '10, 15',
+      className: `route-path-animation ${isAlternative ? 'alternative-route' : ''}`
+    }).addTo(app.map);
+
+    if (!isAlternative) {
+      // Add start marker
+      this.startMarker = L.marker(routePoints[0], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon start-marker',
+          html: '<div class="marker-content"><span class="material-icons">trip_origin</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        })
+      }).addTo(app.map);
+
+      // Add end marker
+      this.endMarker = L.marker(routePoints[routePoints.length - 1], {
+        icon: L.divIcon({
+          className: 'custom-marker-icon end-marker',
+          html: '<div class="marker-content"><span class="material-icons">place</span></div>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 30]
+        })
+      }).addTo(app.map);
+
+      // Fit map to show the route
+      app.map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+    }
+
+    return routeLine;
+  },
+
+async createAlternativeRoute(originalPoints) {
     if (!this.activeRoute) return;
 
     // Get start and end points from the active route
@@ -296,57 +317,369 @@ const routeManager = {
     const end = routePoints[routePoints.length - 1];
 
     try {
-      // Calculate alternative route using OSRM
-      const response = await fetch(
-        `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=true`
-      );
-      const data = await response.json();
+      // Ensure we have valid coordinates for the OSRM API
+      const startCoords = start.hasOwnProperty('lng') ? [start.lng, start.lat] : [start[1], start[0]];
+      const endCoords = end.hasOwnProperty('lng') ? [end.lng, end.lat] : [end[1], end[0]];
 
-      if (data.code === 'Ok' && data.routes.length > 0) {
+      // For user-selected routes, use OSRM alternatives API
+      if (this.userSelectedRoute) {
         // Remove existing alternative route if any
         if (this.alternativeRoute) {
           app.map.removeLayer(this.alternativeRoute);
         }
 
-        // Select the most different route from the alternatives
-        const alternativeRoutePoints = data.routes.length > 1 
-          ? data.routes[1].geometry.coordinates.map(coord => [coord[1], coord[0]])
-          : data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        try {
+          // Request alternative routes from OSRM
+          const response = await fetch(
+            `https://router.project-osrm.org/route/v1/driving/${startCoords[0]},${startCoords[1]};${endCoords[0]},${endCoords[1]}?overview=full&geometries=geojson&alternatives=3`
+          );
+          const data = await response.json();
 
-        // Create new alternative route
-        this.alternativeRoute = L.polyline(alternativeRoutePoints, {
-          color: this.routeColors.alternative,
-          weight: 5,
-          opacity: 0.8,
-          lineCap: 'round',
-          lineJoin: 'round',
-          dashArray: '10, 15',
-          className: 'route-path-animation alternative-route'
-        }).addTo(app.map);
+          if (data.code === 'Ok' && data.routes.length > 1) {
+            // Get coordinates of the current active route for comparison
+            const activeRouteCoords = this.activeRoute.getLatLngs().map(point => [point.lat, point.lng]);
+            
+            // Find the most different alternative route
+            let selectedRoute = null;
+            let maxDifference = 0;
 
-        // Add route info tooltip
-        const routeData = data.routes.length > 1 ? data.routes[1] : data.routes[0];
-        const duration = Math.round(routeData.duration / 60); // minutes
-        const distance = (routeData.distance / 1000).toFixed(1); // km
+            for (let i = 1; i < data.routes.length; i++) {
+              const route = data.routes[i];
+              const routeCoords = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+              
+              // Skip if identical to active route
+              const isIdentical = JSON.stringify(routeCoords) === JSON.stringify(activeRouteCoords);
+              if (isIdentical) continue;
 
-        this.alternativeRoute.bindTooltip(
-          `<div class="font-medium text-sm">
-            <div class="text-green-600">Alternative Route</div>
-            <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
-            <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
-          </div>`,
-          { sticky: true }
-        );
+              // Calculate route difference score
+              const distDiff = Math.abs(route.distance - data.routes[0].distance) / data.routes[0].distance;
+              const timeDiff = Math.abs(route.duration - data.routes[0].duration) / data.routes[0].duration;
+              const difference = distDiff + timeDiff;
 
-        return alternativeRoutePoints;
+              if (difference > maxDifference) {
+                maxDifference = difference;
+                selectedRoute = route;
+              }
+            }
+
+            if (selectedRoute) {
+              const alternativeRoutePoints = selectedRoute.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+              this.alternativeRoute = await this.createRouteWithPoints(alternativeRoutePoints, true);
+
+              // Add route info tooltip with actual duration and distance
+              const duration = Math.round(selectedRoute.duration / 60); // minutes
+              const distance = (selectedRoute.distance / 1000).toFixed(1); // km
+
+              this.alternativeRoute.bindTooltip(
+                `<div class="font-medium text-sm">
+                  <div class="text-green-600">Alternative Route</div>
+                  <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
+                  <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
+                </div>`,
+                { sticky: true }
+              );
+
+              return alternativeRoutePoints;
+            }
+          }
+          
+          // If no alternative found from OSRM, fall back to manual route
+          return this.createManualAlternativeRoute(startCoords, endCoords);
+        } catch (error) {
+          console.error('Error getting OSRM alternative routes:', error);
+          return this.createManualAlternativeRoute(startCoords, endCoords);
+        }
       } else {
-        console.error('No routes found from OSRM service');
-        return null;
+        // Original logic for random routes
+        const response = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${startCoords[0]},${startCoords[1]};${endCoords[0]},${endCoords[1]}?overview=full&geometries=geojson&alternatives=3`
+        );
+        const data = await response.json();
+
+        if (data.code === 'Ok' && data.routes.length > 0) {
+          // Remove existing alternative route if any
+          if (this.alternativeRoute) {
+            app.map.removeLayer(this.alternativeRoute);
+          }
+
+          // Exclude the original route and find the most different alternative
+          const originalRouteCoords = this.activeRoute.getLatLngs().map(point => [point.lat, point.lng]);
+          let selectedRoute = null;
+          let maxDifference = 0;
+
+          for (let i = 1; i < data.routes.length; i++) {
+            const route = data.routes[i];
+            const routeCoords = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+            // Check if the route is identical to the original route
+            const isIdentical = JSON.stringify(routeCoords) === JSON.stringify(originalRouteCoords);
+            if (isIdentical) continue;
+
+            // Calculate how different this route is based on distance and duration
+            const distDiff = Math.abs(route.distance - data.routes[0].distance) / data.routes[0].distance;
+            const timeDiff = Math.abs(route.duration - data.routes[0].duration) / data.routes[0].duration;
+            const difference = distDiff + timeDiff;
+
+            if (difference > maxDifference) {
+              maxDifference = difference;
+              selectedRoute = route;
+            }
+          }
+
+          // If no distinct route is found, fallback to the second route
+          if (!selectedRoute && data.routes.length > 1) {
+            selectedRoute = data.routes[1];
+          }
+
+          if (selectedRoute) {
+            const alternativeRoutePoints = selectedRoute.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+            // Create new alternative route using helper method
+            this.alternativeRoute = await this.createRouteWithPoints(alternativeRoutePoints, true);
+
+            // Add route info tooltip using the selected route's data
+            const duration = Math.round(selectedRoute.duration / 60); // minutes
+            const distance = (selectedRoute.distance / 1000).toFixed(1); // km
+
+            this.alternativeRoute.bindTooltip(
+              `<div class="font-medium text-sm">
+                <div class="text-green-600">Alternative Route</div>
+                <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
+                <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
+              </div>`,
+              { sticky: true }
+            );
+
+            return alternativeRoutePoints;
+          } else {
+            console.error('No distinct alternative route found');
+            return null;
+          }
+        } else {
+          console.error('No routes found from OSRM service');
+          return null;
+        }
       }
     } catch (error) {
       console.error('Error creating alternative route:', error);
       return null;
     }
+  },
+
+  // Find best alternative road from predefined networks
+  findBestAlternativeRoad(startCoords, endCoords) {
+    const startLat = startCoords[1];
+    const startLng = startCoords[0];
+    const endLat = endCoords[1];
+    const endLng = endCoords[0];
+    
+    let bestRoute = null;
+    let minTotalDistance = Infinity;
+    
+    // Check all alternative roads
+    for (const alternativeRoad of ROAD_NETWORKS.alternative_roads) {
+      const roadStart = alternativeRoad[0];
+      const roadEnd = alternativeRoad[alternativeRoad.length - 1];
+      
+      // Calculate distance from user points to road endpoints
+      const startToRoadStart = Math.sqrt(
+        Math.pow(startLat - roadStart[0], 2) + Math.pow(startLng - roadStart[1], 2)
+      );
+      const endToRoadEnd = Math.sqrt(
+        Math.pow(endLat - roadEnd[0], 2) + Math.pow(endLng - roadEnd[1], 2)
+      );
+      
+      // Also check reverse direction
+      const startToRoadEnd = Math.sqrt(
+        Math.pow(startLat - roadEnd[0], 2) + Math.pow(startLng - roadEnd[1], 2)
+      );
+      const endToRoadStart = Math.sqrt(
+        Math.pow(endLat - roadStart[0], 2) + Math.pow(endLng - roadStart[1], 2)
+      );
+      
+      // Choose the better orientation
+      const normalDirection = startToRoadStart + endToRoadEnd;
+      const reverseDirection = startToRoadEnd + endToRoadStart;
+      
+      if (normalDirection < reverseDirection && normalDirection < minTotalDistance) {
+        minTotalDistance = normalDirection;
+        bestRoute = [
+          [startLat, startLng],
+          ...alternativeRoad,
+          [endLat, endLng]
+        ];
+      } else if (reverseDirection < minTotalDistance) {
+        minTotalDistance = reverseDirection;
+        bestRoute = [
+          [startLat, startLng],
+          ...alternativeRoad.slice().reverse(),
+          [endLat, endLng]
+        ];
+      }
+    }
+    
+    // If no good direct alternative, try connecting through intersections
+    if (!bestRoute || minTotalDistance > 0.02) {
+      bestRoute = this.createIntersectionBasedRoute(startLat, startLng, endLat, endLng);
+    }
+    
+    return bestRoute;
+  },
+
+  // Create route through intersections
+  createIntersectionBasedRoute(startLat, startLng, endLat, endLng) {
+    const intersectionValues = Object.values(ELDORET_INTERSECTIONS);
+    
+    // Find two different intersections to route through
+    let midIntersection1 = intersectionValues[1]; // uganda_road
+    let midIntersection2 = intersectionValues[2]; // iten_road
+    
+    // Create a route that goes through alternative intersections
+    return [
+      [startLat, startLng],
+      midIntersection1,
+      midIntersection2,
+      ELDORET_INTERSECTIONS.center,
+      [endLat, endLng]
+    ];
+  },
+
+  // Calculate polyline distance
+  calculatePolylineDistance(polyline) {
+    let totalDistance = 0;
+    for (let i = 0; i < polyline.length - 1; i++) {
+      const lat1 = polyline[i][0];
+      const lng1 = polyline[i][1];
+      const lat2 = polyline[i + 1][0];
+      const lng2 = polyline[i + 1][1];
+      
+      // Haversine formula for distance calculation
+      const R = 6371; // Earth's radius in kilometers
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      totalDistance += R * c;
+    }
+    return totalDistance;
+  },
+
+  // Create manual alternative route when OSRM fails - using predefined road polylines
+  async createManualAlternativeRoute(startCoords, endCoords) {
+    const startLat = startCoords[1];
+    const startLng = startCoords[0];
+    const endLat = endCoords[1];
+    const endLng = endCoords[0];
+    
+    // Find the closest alternative road network from ROAD_NETWORKS
+    let bestAlternativeRoute = null;
+    let minDistance = Infinity;
+    
+    // Check each alternative road in ROAD_NETWORKS
+    for (const alternativeRoad of ROAD_NETWORKS.alternative_roads) {
+      const roadStart = alternativeRoad[0];
+      const roadEnd = alternativeRoad[alternativeRoad.length - 1];
+      
+      // Calculate distance from user points to this road's endpoints
+      const startDistance = Math.sqrt(
+        Math.pow(startLat - roadStart[0], 2) + Math.pow(startLng - roadStart[1], 2)
+      );
+      const endDistance = Math.sqrt(
+        Math.pow(endLat - roadEnd[0], 2) + Math.pow(endLng - roadEnd[1], 2)
+      );
+      
+      const totalDistance = startDistance + endDistance;
+      
+      if (totalDistance < minDistance) {
+        minDistance = totalDistance;
+        bestAlternativeRoute = alternativeRoad;
+      }
+    }
+    
+    // If no good alternative found, create a composite route using multiple road segments
+    if (!bestAlternativeRoute || minDistance > 0.02) {
+      // Try to connect user points through existing road intersections
+      const nearestStartIntersection = this.findNearestIntersection([startLat, startLng]);
+      const nearestEndIntersection = this.findNearestIntersection([endLat, endLng]);
+      
+      if (nearestStartIntersection && nearestEndIntersection) {
+        // Create route: user start -> nearest intersection -> alternative intersection -> user end
+        const alternativeIntersection = this.findAlternativeIntersection(nearestStartIntersection, nearestEndIntersection);
+        
+        bestAlternativeRoute = [
+          [startLat, startLng],
+          nearestStartIntersection,
+          alternativeIntersection,
+          nearestEndIntersection,
+          [endLat, endLng]
+        ];
+      } else {
+        // Last resort: use one of the predefined alternative roads
+        bestAlternativeRoute = ROAD_NETWORKS.alternative_roads[0];
+      }
+    }
+
+    // Remove existing alternative route if any
+    if (this.alternativeRoute) {
+      app.map.removeLayer(this.alternativeRoute);
+    }
+
+    // Create the alternative route using the selected road polyline
+    this.alternativeRoute = L.polyline(bestAlternativeRoute, {
+      color: this.routeColors.alternative,
+      weight: 5,
+      opacity: 0.8,
+      lineCap: 'round',
+      lineJoin: 'round',
+      dashArray: '10, 15',
+      className: 'route-path-animation alternative-route'
+    }).addTo(app.map);
+
+    this.alternativeRoute.bindTooltip(
+      `<div class="font-medium text-sm">
+        <div class="text-green-600">Alternative Route</div>
+        <div class="text-xs text-gray-500">Via alternative roads</div>
+      </div>`,
+      { sticky: true }
+    );
+
+    return bestAlternativeRoute;
+  },
+
+  // Helper method to find nearest intersection
+  findNearestIntersection(point) {
+    let nearestIntersection = null;
+    let minDistance = Infinity;
+    
+    Object.values(ELDORET_INTERSECTIONS).forEach(intersection => {
+      const distance = Math.sqrt(
+        Math.pow(point[0] - intersection[0], 2) + Math.pow(point[1] - intersection[1], 2)
+      );
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestIntersection = intersection;
+      }
+    });
+    
+    return nearestIntersection;
+  },
+
+  // Helper method to find alternative intersection for routing
+  findAlternativeIntersection(startIntersection, endIntersection) {
+    const intersections = Object.values(ELDORET_INTERSECTIONS);
+    
+    // Find an intersection that's not the start or end intersection
+    for (const intersection of intersections) {
+      if (intersection !== startIntersection && intersection !== endIntersection) {
+        return intersection;
+      }
+    }
+    
+    // Fallback to center if no alternative found
+    return ELDORET_INTERSECTIONS.center;
   },
 
   // Get actual road route using OSRM
@@ -361,43 +694,6 @@ const routeManager = {
       return data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
     }
     throw new Error('No route found');
-  },
-
-  // Find nearest alternative route based on start and end points
-  findNearestAlternativeRoute(start, end) {
-    let nearestRoute = ROAD_NETWORKS.alternative_roads[0];
-    let shortestDistance = Infinity;
-
-    ROAD_NETWORKS.alternative_roads.forEach(route => {
-      const startDistance = this.getDistance(start, route[0]);
-      const endDistance = this.getDistance(end, route[route.length - 1]);
-      const totalDistance = startDistance + endDistance;
-
-      if (totalDistance < shortestDistance) {
-        shortestDistance = totalDistance;
-        nearestRoute = route;
-      }
-    });
-
-    return nearestRoute;
-  },
-
-  // Calculate distance between two points (Haversine formula)
-  getDistance(point1, point2) {
-    const R = 6371; // Earth's radius in km
-    const dLat = this.toRad(point2[0] - point1[0]);
-    const dLon = this.toRad(point2[1] - point1[1]);
-    const lat1 = this.toRad(point1[0]);
-    const lat2 = this.toRad(point2[0]);
-
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.sin(dLon/2) * Math.sin(dLon/2) * Math.cos(lat1) * Math.cos(lat2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  },
-
-  toRad(value) {
-    return value * Math.PI / 180;
   },
 
   handleAlert(type) {
@@ -437,14 +733,20 @@ const routeManager = {
 
   reset() {
     this.isAlertActive = false;
+    this.userSelectedRoute = null;
+
+    // Clear routes
     if (this.activeRoute) {
       this.activeRoute.setStyle({ color: this.routeColors.normal });
+      app.map.removeLayer(this.activeRoute);
+      this.activeRoute = null;
     }
     if (this.alternativeRoute) {
       app.map.removeLayer(this.alternativeRoute);
       this.alternativeRoute = null;
     }
-    // Remove markers
+    
+    // Clear markers
     if (this.startMarker) {
       app.map.removeLayer(this.startMarker);
       this.startMarker = null;

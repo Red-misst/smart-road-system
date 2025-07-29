@@ -28,6 +28,11 @@ const clients = {
   ai: null // AI WebSocket connection
 };
 
+// Session tracking for accident counts and other session-specific data
+const sessionTracking = {
+  accidentCounts: new Map() // Map to store accident counts per session
+};
+
 // Settings for video streaming - optimized for 60fps delivery with intelligent frame dropping
 const streamSettings = {
   frameInterval: 16, // ~60 fps (milliseconds between frames to browsers)
@@ -876,23 +881,28 @@ const SMS_CONFIG = {
 async function sendSMSAlert(recipient, message, session) {
   try {
     // Validate session parameter
-    if (!session) {
-      console.error('[SMS ALERT] Cannot send SMS: Session object is null');
+    if (!session || !session._id) {
+      console.error('[SMS ALERT] Cannot send SMS: Invalid session');
       return false;
     }
 
-    // Initialize SMS counters if they don't exist
-    if (!session.smsCounters) {
-      session.smsCounters = {};
-      // Save the initialized counters
-      await updateSession(session._id, { smsCounters: {} });
-    }
-    if (!session.smsCounters[recipient]) {
-      session.smsCounters[recipient] = 0;
+    // Get fresh session data to ensure we have latest counters
+    const currentSession = await getSessionData(session._id);
+    if (!currentSession) {
+      console.error('[SMS ALERT] Cannot send SMS: Session not found in database');
+      return false;
     }
 
+    // Initialize SMS counters in memory if they don't exist
+    if (!currentSession.smsCounters) {
+      currentSession.smsCounters = new Map();
+    }
+
+    // Get current counter for this recipient
+    const currentCount = currentSession.smsCounters.get(recipient) || 0;
+
     // Check if we've hit the limit for this recipient
-    if (session.smsCounters[recipient] >= SMS_CONFIG.MAX_MESSAGES_PER_SESSION) {
+    if (currentCount >= SMS_CONFIG.MAX_MESSAGES_PER_SESSION) {
       console.log(`[SMS ALERT] Skipping SMS to ${recipient}: Message limit (${SMS_CONFIG.MAX_MESSAGES_PER_SESSION}) reached for this session`);
       return false;
     }
@@ -907,12 +917,18 @@ async function sendSMSAlert(recipient, message, session) {
       { headers: { 'x-api-key': SMS_CONFIG.API_KEY } }
     );
 
-    // Increment the counter on successful send
-    session.smsCounters[recipient]++;
-    console.log(`[SMS ALERT] Successfully sent SMS to ${recipient} (${session.smsCounters[recipient]}/${SMS_CONFIG.MAX_MESSAGES_PER_SESSION} for this session):`, response.data);
+    // Update counter in session data
+    currentSession.smsCounters.set(recipient, currentCount + 1);
+    
+    // Use endSession and createSession to update the session
+    // This is a workaround since we don't have direct update functionality
+    await endSession(currentSession._id);
+    await createSession({
+      ...currentSession,
+      smsCounters: Object.fromEntries(currentSession.smsCounters)
+    });
 
-    // Save updated counters to the session in database
-    await updateSession(session._id, { smsCounters: session.smsCounters });
+    console.log(`[SMS ALERT] Successfully sent SMS to ${recipient} (${currentCount + 1}/${SMS_CONFIG.MAX_MESSAGES_PER_SESSION} for this session)`);
 
     return true;
   } catch (error) {
@@ -1065,10 +1081,25 @@ async function processAIResponse(message) {
 
     // Check for accidents and send alerts with rate limiting
     if (accidentCount > 0) {
-      const smsMsg = `URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com`;
-      await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
-      const adminMsg = `URGENT: Accident detected at camera route X Time: ${new Date().toLocaleString()}. Send Authorities.`;
-      await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
+      // Get current accident count for this session
+      const currentAccidents = sessionTracking.accidentCounts.get(activeSessionId) || 0;
+      
+      if (currentAccidents >= 1) {
+        console.log(`[ACCIDENT LIMIT] Already detected an accident for session ${activeSessionId}, skipping alerts`);
+        // Remove accident detections from the record
+        detectionRecord.detections = detectionRecord.detections.filter(d => d.class_name !== 'accident');
+        detectionRecord.accidentCount = 0;
+      } else {
+        // Increment accident count for this session
+        sessionTracking.accidentCounts.set(activeSessionId, currentAccidents + 1);
+        
+        // Send SMS alerts
+        const smsMsg = `URGENT: Accident detected at route X. Traffic congestion expected. Find alternative routes: https://ai-vision.onrender.com`;
+        const adminMsg = `URGENT: Accident detected at camera route X Time: ${new Date().toLocaleString()}. Send Authorities.`;
+        
+        await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
+        await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
+      }
     }
     // Broadcast detection results to browser clients
 
