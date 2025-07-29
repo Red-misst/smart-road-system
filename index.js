@@ -30,7 +30,8 @@ const clients = {
 
 // Session tracking for accident counts and other session-specific data
 const sessionTracking = {
-  accidentCounts: new Map() // Map to store accident counts per session
+  accidentCounts: new Map(), // Map to store accident counts per session
+  thresholdNotified: new Map() // Map to track if threshold notification has been sent for a session
 };
 
 // Settings for video streaming - optimized for 60fps delivery with intelligent frame dropping
@@ -1070,12 +1071,28 @@ async function processAIResponse(message) {
       // Get all detections for this session
       const allDetections = await getSessionDetections(activeSessionId, 1000, 0);
       const totalCars = allDetections.reduce((sum, det) => sum + (det.carCount || 0), 0);
-      if (totalCars >= session.count) {
+      
+      // Initialize threshold notification flag if not exists
+      if (!sessionTracking.thresholdNotified) {
+        sessionTracking.thresholdNotified = new Map();
+      }
+      
+      // Check if threshold is exceeded and notification hasn't been sent yet
+      if (totalCars >= session.count && !sessionTracking.thresholdNotified.get(activeSessionId)) {
+        console.log(`[THRESHOLD ALERT] Traffic count ${totalCars} exceeded threshold ${session.count}`);
+        
         // Send threshold alerts with rate limiting
-        const smsMsg = `ALERT: Traffic threshold exceeded at route X. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com`;
-        await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
-        const adminMsg = `ALERT: Traffic threshold exceeded threshold: ${session.count} at route X. Deploy traffic management.`;
-        await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
+        const smsMsg = `ALERT: Traffic threshold exceeded at route X. Current count: ${totalCars}, Threshold: ${session.count}. Congestion imminent. Find alternative routes: https://ai-vision.onrender.com`;
+        const alertSent = await sendSMSAlert(SMS_CONFIG.THRESHOLD_NUMBER, smsMsg, session);
+        
+        if (alertSent) {
+          const adminMsg = `ALERT: Traffic threshold exceeded. Current: ${totalCars}, Threshold: ${session.count} at route X. Deploy traffic management.`;
+          await sendSMSAlert(SMS_CONFIG.ACCIDENT_NUMBER, adminMsg, session);
+          
+          // Mark that we've sent the threshold notification for this session
+          sessionTracking.thresholdNotified.set(activeSessionId, true);
+          console.log(`[THRESHOLD ALERT] Notification sent for session ${activeSessionId}`);
+        }
       }
     }
 
