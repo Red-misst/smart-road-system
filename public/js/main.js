@@ -288,39 +288,64 @@ const routeManager = {
   },
 
   async createAlternativeRoute(originalPoints) {
-    // Find nearest alternative road based on start point
-    const start = originalPoints[0];
-    const end = originalPoints[originalPoints.length - 1];
-    
-    // Find closest alternative route
-    const alternativeRoute = this.findNearestAlternativeRoute(start, end);
+    if (!this.activeRoute) return;
+
+    // Get start and end points from the active route
+    const routePoints = this.activeRoute.getLatLngs();
+    const start = routePoints[0];
+    const end = routePoints[routePoints.length - 1];
 
     try {
-      // Get actual route using OSRM
-      const routePoints = await this.getOSRMRoute(alternativeRoute[0], alternativeRoute[alternativeRoute.length - 1]);
+      // Calculate alternative route using OSRM
+      const response = await fetch(
+        `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&alternatives=true`
+      );
+      const data = await response.json();
 
-      this.alternativeRoute = L.polyline(routePoints, {
-        color: this.routeColors.alternative,
-        weight: 5,
-        opacity: 0.8,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: '10, 15',
-        className: 'route-path-animation alternative-route'
-      }).addTo(app.map);
+      if (data.code === 'Ok' && data.routes.length > 0) {
+        // Remove existing alternative route if any
+        if (this.alternativeRoute) {
+          app.map.removeLayer(this.alternativeRoute);
+        }
 
-      return routePoints;
+        // Select the most different route from the alternatives
+        const alternativeRoutePoints = data.routes.length > 1 
+          ? data.routes[1].geometry.coordinates.map(coord => [coord[1], coord[0]])
+          : data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+        // Create new alternative route
+        this.alternativeRoute = L.polyline(alternativeRoutePoints, {
+          color: this.routeColors.alternative,
+          weight: 5,
+          opacity: 0.8,
+          lineCap: 'round',
+          lineJoin: 'round',
+          dashArray: '10, 15',
+          className: 'route-path-animation alternative-route'
+        }).addTo(app.map);
+
+        // Add route info tooltip
+        const routeData = data.routes.length > 1 ? data.routes[1] : data.routes[0];
+        const duration = Math.round(routeData.duration / 60); // minutes
+        const distance = (routeData.distance / 1000).toFixed(1); // km
+
+        this.alternativeRoute.bindTooltip(
+          `<div class="font-medium text-sm">
+            <div class="text-green-600">Alternative Route</div>
+            <div class="flex items-center"><span class="material-icons text-sm mr-1">schedule</span> ${duration} min</div>
+            <div class="flex items-center"><span class="material-icons text-sm mr-1">straighten</span> ${distance} km</div>
+          </div>`,
+          { sticky: true }
+        );
+
+        return alternativeRoutePoints;
+      } else {
+        console.error('No routes found from OSRM service');
+        return null;
+      }
     } catch (error) {
       console.error('Error creating alternative route:', error);
-      // Fallback to direct polyline
-      this.alternativeRoute = L.polyline(alternativeRoute, {
-        color: this.routeColors.alternative,
-        weight: 5,
-        opacity: 0.8,
-        dashArray: '10, 15',
-        className: 'route-path-animation'
-      }).addTo(app.map);
-      return alternativeRoute;
+      return null;
     }
   },
 
@@ -517,11 +542,11 @@ function initializeMap() {
 
     .route-path-animation {
       stroke-dasharray: 10, 15;
-      animation: dash 30s linear infinite;
+      animation: dash 8s linear infinite;
     }
 
     .alternative-route {
-      animation: dash 30s linear infinite reverse;
+      animation: dash 8s linear infinite reverse;
     }
 
     .custom-marker-icon {
